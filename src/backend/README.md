@@ -12,6 +12,7 @@ docker compose -f infra/compose.yaml up -d --wait
 cd src/backend
 $env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:55432/badminton_hub?sslmode=disable"
 $env:REDIS_URL="redis://localhost:6379/0"
+$env:IDENTITY_TOKEN_SECRET="local_only_change_me_identity_token_secret_32_bytes"
 go run ./cmd/api
 ```
 
@@ -35,6 +36,7 @@ The binary reads process environment, not .env files automatically. The root
 | DATABASE_URL | Required PostgreSQL URL |
 | TEST_DATABASE_URL | Integration-test admin URL; role must have CREATEDB |
 | REDIS_URL | Required redis:// or rediss:// URL; supports credentials and database index |
+| IDENTITY_TOKEN_SECRET | Required 32+ byte secret used to derive one-time email tokens without storing bearer values |
 | DEPENDENCY_TIMEOUT | Startup ping/readiness timeout; default 2s, greater than 0 and at most 30s |
 
 Local Compose binds PostgreSQL/Redis to loopback and preserves named data volumes.
@@ -78,6 +80,26 @@ the configured database untouched.
 Unit tests require no running services and cover readiness failures/deadlines,
 liveness independence and invalid configuration.
 
+## R1 API and operator bootstrap
+
+R1 business routes live under `/api/v1`: authentication and recovery, owner onboarding,
+public player projection, organizer review, venue management/discovery, match draft/publish/search,
+and free instant/approval join. Join and Host decisions require `Idempotency-Key`.
+
+Verification/reset delivery uses the PostgreSQL outbox. The database stores only token hashes and
+non-secret delivery metadata; the worker derives the bearer from `IDENTITY_TOKEN_SECRET` only while
+calling the email adapter. Development uses an in-memory capture adapter. Select and verify a
+production email provider before pilot deployment.
+
+After the first account is verified, an operator can grant the initial audited Admin permissions
+exactly once:
+
+```powershell
+$env:ADMIN_ACCOUNT_ID="<verified-account-id>"
+$env:ADMIN_BOOTSTRAP_RATIONALE="Initial pilot operator"
+go run ./cmd/bootstrap-admin
+```
+
 ## Layout and next step
 
 - cmd/api: lifecycle and dependency composition.
@@ -88,6 +110,9 @@ liveness independence and invalid configuration.
 - internal/platform/testdb: database-per-test integration fixture.
 - internal/httpapi: HTTP routing, liveness and readiness.
 - internal/modules/<module>: bounded business modules.
+
+R1 is closed. The next vertical slice is paid hold and direct-to-Host transfer acknowledgement;
+do not merge payment state into participation or implement gateway/court-booking behavior.
 
 Expose cross-module contracts from each module's root package. Put private code
 under the module's own internal/ directory. Future modules own their SQL/migrations;

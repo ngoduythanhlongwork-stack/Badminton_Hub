@@ -4,9 +4,9 @@ Trạng thái: **READY FOR EXECUTION — 2026-10-04**
 Owner: Backend Team Lead
 Nguồn: PRD, D-01–D-25, bộ spec 1.0 và ADR-001–ADR-012.
 
-Execution status: **Slice 0 verified; R0 CLOSED — 2026-10-04**. Migration, HTTP foundation,
-PostgreSQL outbox, test fixture and architecture guard passed format, vet, unit, build and live
-PostgreSQL/Redis integration checks. Slice 1A may start.
+Execution status: **Slices 0–3 verified; R1 CLOSED — 2026-10-04**. Identity/session,
+adult onboarding, organizer approval, venue publication, discovery and free join pass format,
+vet, unit, build, live PostgreSQL/Redis integration, capacity race and HTTP E2E checks.
 
 ## 1. Mục tiêu và nguyên tắc thực thi
 
@@ -32,7 +32,9 @@ Backend hiện có:
 - PostgreSQL/Redis connection foundation, `/health`, `/ready`.
 - Module-owned migration composition + `cmd/migrate`, stable HTTP errors/middleware,
   PostgreSQL transactional outbox/worker, isolated test database fixture và architecture guard.
-- Package marker cho chín business module; chưa có business table hoặc product workflow.
+- Business schemas `identity`, `players`, `venues`, `matches`; `/api/v1` cho hành trình R1.
+- Opaque session rotation, token-hash-only email workflow, scoped permissions và bootstrap Admin có audit.
+- PostgreSQL-guarded free join, schedule/capacity/idempotency và E2E onboard → publish → join.
 
 Môi trường R0 đã được xác nhận với Go 1.26.8, Docker Engine 25.0.3, PostgreSQL 17 và Redis 7.4.
 PostgreSQL Compose dùng host port `55432` để không xung đột PostgreSQL host trên `5432`.
@@ -274,5 +276,6 @@ Definition of Done cho mỗi slice:
 
 ## 9. Việc đầu tiên cho agent BE
 
-Slice 0 đã được implement và R0 đã đóng. Không tạo toàn bộ ERD MVP upfront.
-Task tiếp theo là Slice 1A (register/verify/session), độc lập, có migration và test riêng.
+Slices 0–3 đã được implement và R1 đã đóng. Không tạo toàn bộ ERD MVP upfront.
+Task tiếp theo là Slice 4 (paid hold và transfer acknowledgement), giữ độc lập lifecycle
+participation/hold/payment và các invariant D-13/D-16.

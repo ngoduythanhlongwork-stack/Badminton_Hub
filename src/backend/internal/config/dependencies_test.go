@@ -12,6 +12,7 @@ func TestInvalidDependencyConfiguration(t *testing.T) {
 		{"DATABASE_URL", "postgres:///missing-host"},
 		{"REDIS_URL", ""},
 		{"REDIS_URL", "http://user:supersecret@localhost"},
+		{"IDENTITY_TOKEN_SECRET", "too-short"},
 		{"DEPENDENCY_TIMEOUT", "0s"},
 		{"DEPENDENCY_TIMEOUT", "-1s"},
 		{"DEPENDENCY_TIMEOUT", "31s"},
@@ -21,6 +22,7 @@ func TestInvalidDependencyConfiguration(t *testing.T) {
 			t.Setenv("HTTP_ADDR", "127.0.0.1:5080")
 			t.Setenv("DATABASE_URL", "postgres://localhost/test")
 			t.Setenv("REDIS_URL", "redis://localhost:6379/0")
+			t.Setenv("IDENTITY_TOKEN_SECRET", "test_identity_token_secret_32_bytes_minimum")
 			t.Setenv("DEPENDENCY_TIMEOUT", "2s")
 			t.Setenv(tc.key, tc.value)
 			_, err := Load()

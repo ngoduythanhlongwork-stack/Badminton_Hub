@@ -10,6 +10,7 @@ type Options struct {
 	Readiness   Readiness
 	Logger      *slog.Logger
 	MaxBodySize int64
+	Register    func(*http.ServeMux)
 }
 
 // NewHandler is the composition point for module HTTP routes.
@@ -29,12 +30,15 @@ func NewHandlerWithOptions(options Options) http.Handler {
 		writeJSON(w, map[string]string{
 			"service":      "Badminton Hub API",
 			"architecture": "modular-monolith",
-			"status":       "foundation",
+			"status":       "r1-free-matchmaking",
 		})
 	}))
 	mux.HandleFunc("/health", method(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	}))
+	if options.Register != nil {
+		options.Register(mux)
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, "route_not_found", "Route not found.")
 	})

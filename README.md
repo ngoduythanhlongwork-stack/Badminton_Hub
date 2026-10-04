@@ -74,6 +74,6 @@ See [backend setup and verification](src/backend/README.md). Never commit creden
 
 ## Current status
 
-This repository has a verified Go foundation for PostgreSQL/Redis and no completed product epic yet.
-Business specification 1.0 is PO-approved. Backend Slice 0 passed R0; Identity register/verify/session
-is the next vertical slice.
+Business specification 1.0 is PO-approved. Backend R1 is verified: register/verify/session,
+adult onboarding, organizer approval, venue publication, match discovery and concurrency-safe
+free join run end-to-end through `/api/v1`. The next milestone is R2 paid hold/payment/cancellation.

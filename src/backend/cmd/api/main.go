@@ -45,11 +45,16 @@ func run(logger *slog.Logger) (runErr error) {
 	}
 	cancelPing()
 	logger.Info("PostgreSQL connected")
+	r1, err := composeR1(clients.Postgres, cfg, logger)
+	if err != nil {
+		return fmt.Errorf("compose R1 modules: %w", err)
+	}
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewHandlerWithOptions(httpapi.Options{
 			Readiness: httpapi.Readiness{Postgres: clients.Postgres.Ping, Redis: clients.PingRedis, Timeout: cfg.DependencyTimeout},
 			Logger:    logger,
+			Register:  r1.routes.Register,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -58,7 +63,7 @@ func run(logger *slog.Logger) (runErr error) {
 	}
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
-	worker := startWorker(ctx, outbox.Worker{Pool: clients.Postgres, Handlers: map[string]outbox.Handler{}, Logger: logger})
+	worker := startWorker(ctx, outbox.Worker{Pool: clients.Postgres, Handlers: r1.handlers, Logger: logger})
 	defer func() {
 		if err := worker.Stop(10 * time.Second); err != nil {
 			if runErr == nil {

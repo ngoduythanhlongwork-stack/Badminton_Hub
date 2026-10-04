@@ -40,3 +40,16 @@ func TestRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestModuleRoutesAreRegisteredInsideSharedMiddleware(t *testing.T) {
+	handler := NewHandlerWithOptions(Options{Register: func(mux *http.ServeMux) {
+		mux.HandleFunc("GET /api/v1/example", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]string{"status": "module"})
+		})
+	}})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/example", nil))
+	if response.Code != http.StatusOK || response.Header().Get(RequestIDHeader) == "" {
+		t.Fatalf("status=%d requestID=%q", response.Code, response.Header().Get(RequestIDHeader))
+	}
+}

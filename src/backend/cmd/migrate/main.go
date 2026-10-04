@@ -7,6 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"badmintonhub/internal/modules/identity"
+	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,7 +34,12 @@ func run() error {
 		return fmt.Errorf("initialize PostgreSQL: %w", err)
 	}
 	defer pool.Close()
-	runner, err := migrations.NewRunner(pool)
+	runner, err := migrations.NewRunner(pool,
+		identity.Migrations(),
+		players.Migrations(),
+		venues.Migrations(),
+		matches.Migrations(),
+	)
 	if err != nil {
 		return err
 	}

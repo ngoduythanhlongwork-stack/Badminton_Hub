@@ -12,10 +12,11 @@ import (
 
 // Config contains only settings consumed by this foundation.
 type Config struct {
-	HTTPAddr          string
-	DatabaseURL       string
-	RedisURL          string
-	DependencyTimeout time.Duration
+	HTTPAddr            string
+	DatabaseURL         string
+	RedisURL            string
+	IdentityTokenSecret string
+	DependencyTimeout   time.Duration
 }
 
 func Load() (Config, error) {
@@ -39,6 +40,10 @@ func Load() (Config, error) {
 	if !validURL(redisURL, "redis", "rediss") {
 		return Config{}, fmt.Errorf("REDIS_URL must be a Redis URL with a host")
 	}
+	identityTokenSecret := os.Getenv("IDENTITY_TOKEN_SECRET")
+	if len(identityTokenSecret) < 32 {
+		return Config{}, fmt.Errorf("IDENTITY_TOKEN_SECRET must contain at least 32 bytes")
+	}
 	timeout := 2 * time.Second
 	if value := os.Getenv("DEPENDENCY_TIMEOUT"); value != "" {
 		parsed, err := time.ParseDuration(value)
@@ -47,7 +52,7 @@ func Load() (Config, error) {
 		}
 		timeout = parsed
 	}
-	return Config{HTTPAddr: addr, DatabaseURL: databaseURL, RedisURL: redisURL, DependencyTimeout: timeout}, nil
+	return Config{HTTPAddr: addr, DatabaseURL: databaseURL, RedisURL: redisURL, IdentityTokenSecret: identityTokenSecret, DependencyTimeout: timeout}, nil
 }
 
 func validURL(value string, schemes ...string) bool {

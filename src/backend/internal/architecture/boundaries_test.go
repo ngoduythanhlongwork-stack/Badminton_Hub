@@ -68,7 +68,13 @@ func inspectModules(root string) ([]string, error) {
 			if err != nil {
 				return err
 			}
-			searchable = []byte(strings.Join(literals, "\n"))
+			var sqlLiterals []string
+			for _, literal := range literals {
+				if looksLikeSQL(literal) {
+					sqlLiterals = append(sqlLiterals, literal)
+				}
+			}
+			searchable = []byte(strings.Join(sqlLiterals, "\n"))
 		}
 		for schema := range moduleNames {
 			if schema == owner {
@@ -82,6 +88,12 @@ func inspectModules(root string) ([]string, error) {
 		return nil
 	})
 	return violations, err
+}
+
+var sqlKeyword = regexp.MustCompile(`(?i)\b(SELECT|INSERT|UPDATE|DELETE|FROM|JOIN|CREATE|ALTER|DROP|TRUNCATE)\b`)
+
+func looksLikeSQL(value string) bool {
+	return sqlKeyword.MatchString(value)
 }
 
 func goStringLiterals(filename string, contents []byte) ([]string, error) {
