@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+    "figma": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@ennamjsc/figma-mcp"
+      ],
+      "env": {
+        "FIGMA_TOKEN": "${FIGMA_TOKEN}"
+      }
+    },
+    "serena": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena",
+        "start-mcp-server",
+        "--context",
+        "ide-assistant",
+        "--project",
+        "D:\\WorkSpace\\Badminton_Hub"
+      ]
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "jira": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@ennamjsc/jira-mcp"
+      ],
+      "env": {
+        "JIRA_URL": "${JIRA_URL}",
+        "JIRA_TOKEN": "${JIRA_TOKEN}"
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.idea/
+**/.vscode/
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+**/.env
+**/.env.local
+!.env.example
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+/src/backend/api
+/src/backend/api.exe
+*.test
+
+# Local secrets — MCP keys the scaffold tells you to set (JIRA/FIGMA/GITHUB/PG/TRIPO tokens)
+.env.local
+.env
+# Claude Code local overrides
+.claude/settings.local.json
+.claude/.cache/
+# Serena local cache
+.serena/.cache/
+# Backup folder from scaffold edit-mode (safe to delete after review)
+.ennam-scaffold-backup/
+# Checkpoints are committed by default. Uncomment to ignore:
+# .serena/checkpoint/
+# Ennam runtime caches (game-unity profile: asset-pipeline job persistence, perf-budget results)
+.ennam/
+# Claude Code scheduled tasks — runtime state, folder-specific (automation add-on docs)
+.claude/scheduled_tasks.json

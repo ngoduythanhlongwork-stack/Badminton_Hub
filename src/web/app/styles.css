@@ -1,0 +1,40 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f4f8f5;
+  color: #10231c;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; }
+
+main {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+  gap: 2rem;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 3rem 1.25rem;
+}
+
+.hero, .foundation {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #d8e7df;
+  border-radius: 1.5rem;
+  padding: clamp(1.5rem, 5vw, 4rem);
+  box-shadow: 0 1.5rem 4rem rgba(16, 35, 28, 0.08);
+}
+
+.eyebrow { color: #0b6e4f; font-weight: 800; letter-spacing: .08em; }
+h1 { max-width: 14ch; font-size: clamp(2.5rem, 8vw, 5.5rem); line-height: .98; margin: 1rem 0; }
+.lead { max-width: 42rem; color: #496158; font-size: 1.2rem; line-height: 1.6; }
+.actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+.actions button { border: 0; border-radius: 999px; padding: .9rem 1.4rem; background: #0b6e4f; color: white; font-weight: 750; }
+.actions .secondary { background: #e4f2eb; color: #0b6e4f; }
+.foundation ul { display: grid; gap: .75rem; padding-left: 1.25rem; line-height: 1.5; }
+
+@media (min-width: 52rem) {
+  main { grid-template-columns: 1.6fr 1fr; }
+}

@@ -1,0 +1,99 @@
+# Go backend
+
+One Go module and one deployable API. Requires Go 1.26 or newer.
+PostgreSQL uses pgxpool; Redis uses go-redis/v9. Dependencies are pinned in go.mod/go.sum.
+
+## Local setup
+
+From repository root, start the dedicated local infrastructure:
+
+```powershell
+docker compose -f infra/compose.yaml up -d --wait
+cd src/backend
+$env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:55432/badminton_hub?sslmode=disable"
+$env:REDIS_URL="redis://localhost:6379/0"
+go run ./cmd/api
+```
+
+Apply migrations before starting a new API version:
+
+```powershell
+go run ./cmd/migrate
+```
+
+The migration command is intentionally separate from API startup so deploys can serialize and
+observe schema changes before new code serves traffic. Migrations are forward-only and checksum
+protected. Recover a failed production rollout with a reviewed corrective migration or database
+restore; never edit an applied migration.
+
+The binary reads process environment, not .env files automatically. The root
+.env.example documents settings. Never commit actual deployment credentials.
+
+| Setting | Meaning |
+| --- | --- |
+| HTTP_ADDR | Listen address; default 127.0.0.1:5080 |
+| DATABASE_URL | Required PostgreSQL URL |
+| TEST_DATABASE_URL | Integration-test admin URL; role must have CREATEDB |
+| REDIS_URL | Required redis:// or rediss:// URL; supports credentials and database index |
+| DEPENDENCY_TIMEOUT | Startup ping/readiness timeout; default 2s, greater than 0 and at most 30s |
+
+Local Compose binds PostgreSQL/Redis to loopback and preserves named data volumes.
+Use PostgreSQL sslmode=verify-full and Redis rediss:// for TLS deployments.
+The local example uses disabled PostgreSQL TLS and a development-only password.
+
+## Lifecycle and health
+
+- GET /: service metadata.
+- GET /health: process liveness; never queries dependencies.
+- GET /ready: PostgreSQL and Redis checks within one shared timeout.
+  PostgreSQL failure gives HTTP 503/unavailable; Redis-only failure gives
+  HTTP 200/degraded; both available gives HTTP 200/ok.
+- PostgreSQL must respond before API startup. Redis outage emits a warning but
+  allows startup because Redis is disposable acceleration.
+- Pools are reused across requests and closed after HTTP shutdown.
+- The PostgreSQL outbox worker starts with the API and stops during graceful shutdown. Apply
+  migrations first; Redis is never used as the durable job source.
+- Driver errors/connection strings are not exposed in health responses or startup logs.
+- HTTP timeouts and bounded graceful shutdown are configured.
+- Use a TLS reverse proxy for production HTTPS.
+
+Redis recovery is checked on subsequent readiness calls; clients remain reusable.
+Future cache consumers must tolerate Redis errors and preserve correctness in PostgreSQL.
+
+## Verification
+
+From this directory:
+
+```powershell
+go fmt ./...
+go vet ./...
+go test ./...
+go build ./...
+go test -tags=integration ./internal/platform/... -count=1 -v
+```
+
+Connection integration tests require explicit `DATABASE_URL` and `REDIS_URL`. Migration and outbox
+tests require `TEST_DATABASE_URL`; they create and drop a unique database for each test, and leave
+the configured database untouched.
+Unit tests require no running services and cover readiness failures/deadlines,
+liveness independence and invalid configuration.
+
+## Layout and next step
+
+- cmd/api: lifecycle and dependency composition.
+- internal/config: environment configuration validation.
+- internal/platform/connections: shared connection plumbing only.
+- internal/platform/migrations: immutable deployment manifest and transactional runner.
+- internal/platform/outbox: transactional enqueue and lease-based worker.
+- internal/platform/testdb: database-per-test integration fixture.
+- internal/httpapi: HTTP routing, liveness and readiness.
+- internal/modules/<module>: bounded business modules.
+
+Expose cross-module contracts from each module's root package. Put private code
+under the module's own internal/ directory. Future modules own their SQL/migrations;
+do not introduce a shared generic repository.
+
+Each future module stores SQL below `internal/modules/<owner>/migrations`, exposes only root-level
+contracts, and never queries another module's schema. Add its globally unique version to the
+migration catalog; do not create a shared repository. Follow the
+[backend implementation plan](../../docs/BACKEND_IMPLEMENTATION_PLAN.md) for vertical slices.

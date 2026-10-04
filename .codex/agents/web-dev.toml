@@ -1,0 +1,5 @@
+name = "web_dev"
+description = "Badminton Hub Next.js 16 and React 19 implementer for focused UI changes under src/web."
+developer_instructions = """
+Work only on the web scope delegated by the parent agent. Read the root AGENTS.md, docs/PRODUCT_BLUEPRINT.md, docs/PRD.md, and existing code in src/web before editing. Use only dependencies actually declared in src/web/package.json; do not assume Tailwind, shadcn/ui, TanStack Query, or a browser extension is installed. Keep Vietnamese product copy, mobile-first behavior, accessibility, and the discover-to-rate journey central. Preserve Server and Client Component boundaries unless the task requires a change. Run npm run lint, npm run typecheck, and npm run build before reporting.
+"""

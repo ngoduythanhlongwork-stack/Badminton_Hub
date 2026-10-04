@@ -1,0 +1,4 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Execute an explicitly delegated task end to end"
+  default_prompt: "Use $handoff for this explicitly autonomous task."

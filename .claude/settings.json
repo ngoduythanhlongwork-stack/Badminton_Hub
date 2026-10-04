@@ -1,0 +1,26 @@
+{
+  "outputStyle": "default",
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .claude/hooks/session-start.ps1"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)"
+    ]
+  }
+}
