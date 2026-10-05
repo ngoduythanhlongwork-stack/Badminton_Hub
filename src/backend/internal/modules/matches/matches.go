@@ -12,9 +12,10 @@ import (
 type Status string
 
 const (
-	StatusDraft Status = "DRAFT"
-	StatusOpen  Status = "OPEN"
-	StatusFull  Status = "FULL"
+	StatusDraft     Status = "DRAFT"
+	StatusOpen      Status = "OPEN"
+	StatusFull      Status = "FULL"
+	StatusCancelled Status = "CANCELLED"
 )
 
 type JoinMode string
@@ -27,10 +28,22 @@ const (
 type ParticipationStatus string
 
 const (
-	ParticipationRequested ParticipationStatus = "REQUESTED"
-	ParticipationJoined    ParticipationStatus = "JOINED"
-	ParticipationRejected  ParticipationStatus = "REJECTED"
-	ParticipationRemoved   ParticipationStatus = "REMOVED"
+	ParticipationRequested       ParticipationStatus = "REQUESTED"
+	ParticipationAwaitingPayment ParticipationStatus = "AWAITING_PAYMENT"
+	ParticipationJoined          ParticipationStatus = "JOINED"
+	ParticipationRejected        ParticipationStatus = "REJECTED"
+	ParticipationRemoved         ParticipationStatus = "REMOVED"
+	ParticipationCancelled       ParticipationStatus = "CANCELLED"
+	ParticipationExpired         ParticipationStatus = "EXPIRED"
+)
+
+type HoldStatus string
+
+const (
+	HoldHeld     HoldStatus = "HELD"
+	HoldConsumed HoldStatus = "CONSUMED"
+	HoldExpired  HoldStatus = "EXPIRED"
+	HoldReleased HoldStatus = "RELEASED"
 )
 
 type VenueSnapshot struct{ ID, Name, Address, Area, TimeZone, Court string }
@@ -40,7 +53,11 @@ type Match struct {
 	StartAt, EndAt                                       time.Time
 	MinLevel, MaxLevel, Capacity                         int
 	FeeMinor                                             int64
+	DepositMinor                                         int64
 	Currency                                             string
+	PaymentRecipient, PaymentInstructions                string
+	PaymentInstructionVersion                            int
+	CancellationPolicyVersion                            string
 	JoinMode                                             JoinMode
 	HostPlays, CourtAttested                             bool
 	CourtAttestedAt                                      time.Time
@@ -53,7 +70,10 @@ type Draft struct {
 	StartAt, EndAt                                           time.Time
 	MinLevel, MaxLevel, Capacity                             int
 	FeeMinor                                                 int64
+	DepositMinor                                             int64
 	Currency                                                 string
+	PaymentRecipient, PaymentInstructions                    string
+	PaymentInstructionVersion                                int
 	JoinMode                                                 JoinMode
 	HostPlays, CourtAttested                                 bool
 }
@@ -74,6 +94,28 @@ type Participation struct {
 	Status                ParticipationStatus
 	DecisionReason        string
 	CreatedAt, UpdatedAt  time.Time
+	Hold                  *Hold
+}
+
+type Hold struct {
+	ID, ParticipationID string
+	Status              HoldStatus
+	ExpiresAt           time.Time
+	TransferReportedAt  *time.Time
+}
+
+type PaymentRequiredEvent struct {
+	EventID, ParticipationID, MatchID, PayerID, PayeeID            string
+	FeeMinor, DepositMinor                                         int64
+	Currency, PaymentRecipient, PaymentInstructions, PolicyVersion string
+	InstructionVersion                                             int
+	HoldExpiresAt, MatchStartAt, OccurredAt                        time.Time
+}
+
+type CancellationEvent struct {
+	EventID, MatchID, ParticipationID, PlayerID, HostID string
+	Cause, Reason, RefundOutcome, PolicyVersion         string
+	OccurredAt                                          time.Time
 }
 type PublishEligibility interface {
 	CanPublishMatch(context.Context, string) (bool, error)
@@ -101,16 +143,26 @@ type Repository interface {
 }
 
 var (
-	ErrForbidden            = errors.New("match action forbidden")
-	ErrInvalid              = errors.New("invalid match")
-	ErrNotFound             = errors.New("match not found")
-	ErrNotOpen              = errors.New("match is not open")
-	ErrFull                 = errors.New("match is full")
-	ErrScheduleConflict     = errors.New("player schedule conflict")
-	ErrAlreadyParticipating = errors.New("player already participates")
-	ErrPaidUnsupported      = errors.New("paid matches are not supported in R1")
-	ErrIdempotencyConflict  = errors.New("idempotency key reused for another command")
+	ErrForbidden             = errors.New("match action forbidden")
+	ErrInvalid               = errors.New("invalid match")
+	ErrNotFound              = errors.New("match not found")
+	ErrNotOpen               = errors.New("match is not open")
+	ErrFull                  = errors.New("match is full")
+	ErrScheduleConflict      = errors.New("player schedule conflict")
+	ErrAlreadyParticipating  = errors.New("player already participates")
+	ErrHoldExpired           = errors.New("payment hold expired")
+	ErrCapacityBelowOccupied = errors.New("capacity is below occupied slots")
+	ErrIdempotencyConflict   = errors.New("idempotency key reused for another command")
 )
+
+type R2Repository interface {
+	ExtendHold(context.Context, string, string, time.Time) (Participation, error)
+	ConfirmPayment(context.Context, string, string, time.Time) (Participation, error)
+	ExpireDueHolds(context.Context, time.Time, int) (int, error)
+	CancelParticipation(context.Context, string, string, string, string, time.Time) (Participation, error)
+	CancelMatch(context.Context, string, string, string, string, time.Time) (Match, error)
+	UpdatePublished(context.Context, string, string, string, string, int, time.Time) (Match, error)
+}
 
 type Service struct {
 	repo               Repository
@@ -240,6 +292,76 @@ func (s Service) Remove(ctx context.Context, h, m, p, k, reason string) (Partici
 	}
 	return s.repo.Decide(ctx, h, m, p, k, ParticipationRemoved, reason, s.now().UTC())
 }
+
+func (s Service) ReportTransfer(ctx context.Context, player, participationID string) (Participation, error) {
+	return s.ApplyTransferReport(ctx, player, participationID, s.now().UTC())
+}
+
+func (s Service) ApplyTransferReport(ctx context.Context, player, participationID string, reportedAt time.Time) (Participation, error) {
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return Participation{}, ErrInvalid
+	}
+	return repo.ExtendHold(ctx, player, participationID, reportedAt.UTC())
+}
+
+func (s Service) ConfirmPayment(ctx context.Context, host, participationID string) (Participation, error) {
+	return s.ConfirmPaymentAt(ctx, host, participationID, s.now().UTC())
+}
+
+func (s Service) ConfirmPaymentAt(ctx context.Context, host, participationID string, confirmedAt time.Time) (Participation, error) {
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return Participation{}, ErrInvalid
+	}
+	return repo.ConfirmPayment(ctx, host, participationID, confirmedAt.UTC())
+}
+
+func (s Service) ExpireDueHolds(ctx context.Context, limit int) (int, error) {
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return 0, ErrInvalid
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	return repo.ExpireDueHolds(ctx, s.now().UTC(), limit)
+}
+
+func (s Service) CancelParticipation(ctx context.Context, player, participationID, key, reason string) (Participation, error) {
+	if key == "" || strings.TrimSpace(reason) == "" {
+		return Participation{}, ErrInvalid
+	}
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return Participation{}, ErrInvalid
+	}
+	return repo.CancelParticipation(ctx, player, participationID, key, strings.TrimSpace(reason), s.now().UTC())
+}
+
+func (s Service) CancelMatch(ctx context.Context, host, matchID, key, reason string) (Match, error) {
+	if key == "" || strings.TrimSpace(reason) == "" {
+		return Match{}, ErrInvalid
+	}
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return Match{}, ErrInvalid
+	}
+	return repo.CancelMatch(ctx, host, matchID, key, strings.TrimSpace(reason), s.now().UTC())
+}
+
+func (s Service) UpdatePublished(ctx context.Context, host, matchID, key, description string, capacity int) (Match, error) {
+	description = strings.TrimSpace(description)
+	if key == "" || description == "" || capacity <= 0 {
+		return Match{}, ErrInvalid
+	}
+	repo, ok := s.repo.(R2Repository)
+	if !ok {
+		return Match{}, ErrInvalid
+	}
+	return repo.UpdatePublished(ctx, host, matchID, key, description, capacity, s.now().UTC())
+}
+
 func (s Service) fromDraft(ctx context.Context, host string, d Draft) (Match, error) {
 	if s.venues == nil {
 		return Match{}, ErrInvalid
@@ -248,7 +370,10 @@ func (s Service) fromDraft(ctx context.Context, host string, d Draft) (Match, er
 	if e != nil {
 		return Match{}, e
 	}
-	m := Match{HostID: host, Title: strings.TrimSpace(d.Title), Description: strings.TrimSpace(d.Description), Format: d.Format, Style: d.Style, Rules: d.Rules, Venue: v, StartAt: d.StartAt.UTC(), EndAt: d.EndAt.UTC(), MinLevel: d.MinLevel, MaxLevel: d.MaxLevel, Capacity: d.Capacity, FeeMinor: d.FeeMinor, Currency: d.Currency, JoinMode: d.JoinMode, HostPlays: d.HostPlays, CourtAttested: d.CourtAttested}
+	m := Match{HostID: host, Title: strings.TrimSpace(d.Title), Description: strings.TrimSpace(d.Description), Format: d.Format, Style: d.Style, Rules: d.Rules, Venue: v, StartAt: d.StartAt.UTC(), EndAt: d.EndAt.UTC(), MinLevel: d.MinLevel, MaxLevel: d.MaxLevel, Capacity: d.Capacity, FeeMinor: d.FeeMinor, DepositMinor: d.DepositMinor, Currency: d.Currency, PaymentRecipient: strings.TrimSpace(d.PaymentRecipient), PaymentInstructions: strings.TrimSpace(d.PaymentInstructions), PaymentInstructionVersion: d.PaymentInstructionVersion, CancellationPolicyVersion: "MVP-2026-10-D15", JoinMode: d.JoinMode, HostPlays: d.HostPlays, CourtAttested: d.CourtAttested}
+	if m.PaymentInstructionVersion <= 0 {
+		m.PaymentInstructionVersion = 1
+	}
 	if d.CourtAttested {
 		m.CourtAttestedAt = s.now().UTC()
 	}
@@ -270,8 +395,11 @@ func validate(m Match, now time.Time) error {
 	if !allowed(m.Format, "SINGLES", "DOUBLES", "MIXED") || !allowed(m.Style, "CASUAL", "SOCIAL", "TRAINING", "COMPETITIVE") {
 		return ErrInvalid
 	}
-	if m.FeeMinor != 0 {
-		return ErrPaidUnsupported
+	if m.FeeMinor < 0 || m.DepositMinor < 0 || m.DepositMinor > m.FeeMinor || m.Currency != "VND" {
+		return fmt.Errorf("%w: VND fee/deposit is invalid", ErrInvalid)
+	}
+	if m.DepositMinor > 0 && (m.PaymentRecipient == "" || m.PaymentInstructions == "") {
+		return fmt.Errorf("%w: payment instruction is required", ErrInvalid)
 	}
 	if len(m.Currency) != 3 {
 		return fmt.Errorf("%w: ISO currency is required", ErrInvalid)

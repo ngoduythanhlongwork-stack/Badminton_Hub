@@ -30,7 +30,7 @@ func NewHandlerWithOptions(options Options) http.Handler {
 		writeJSON(w, map[string]string{
 			"service":      "Badminton Hub API",
 			"architecture": "modular-monolith",
-			"status":       "r1-free-matchmaking",
+			"status":       "r2-paid-pilot-core",
 		})
 	}))
 	mux.HandleFunc("/health", method(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {

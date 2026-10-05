@@ -73,15 +73,23 @@ func TestApprovalSkillMismatchCanRequest(t *testing.T) {
 		t.Fatal("join request not delegated")
 	}
 }
-func TestValidationFreeOnlyAndTimezone(t *testing.T) {
+func TestValidationPaidVNDAndTimezone(t *testing.T) {
 	now := time.Now().UTC()
 	m := Match{Title: "A", Description: "D", Format: "DOUBLES", Style: "SOCIAL", Rules: "R", Venue: VenueSnapshot{ID: "v", TimeZone: "Asia/Ho_Chi_Minh"}, StartAt: now.Add(time.Hour), EndAt: now.Add(2 * time.Hour), MinLevel: 1, MaxLevel: 6, Capacity: 2, Currency: "VND", JoinMode: JoinInstant, CourtAttested: true}
 	if e := validate(m, now); e != nil {
 		t.Fatal(e)
 	}
-	m.FeeMinor = 1
-	if !errors.Is(validate(m, now), ErrPaidUnsupported) {
-		t.Fatal("paid match accepted")
+	m.FeeMinor = 100_000
+	m.DepositMinor = 30_000
+	m.PaymentRecipient = "Host kèo"
+	m.PaymentInstructions = "Chuyển khoản theo mã lượt"
+	m.PaymentInstructionVersion = 1
+	if err := validate(m, now); err != nil {
+		t.Fatalf("valid paid match rejected: %v", err)
+	}
+	m.DepositMinor = 100_001
+	if !errors.Is(validate(m, now), ErrInvalid) {
+		t.Fatal("deposit above fee accepted")
 	}
 }
 func TestNewServiceFailsClosed(t *testing.T) {

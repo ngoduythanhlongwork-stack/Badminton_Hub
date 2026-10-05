@@ -48,6 +48,7 @@ docker compose -f infra/compose.yaml up -d
 cd src/backend
 $env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:55432/badminton_hub?sslmode=disable"
 $env:REDIS_URL="redis://localhost:6379/0"
+$env:IDENTITY_TOKEN_SECRET="local_only_change_me_identity_token_secret_32_bytes"
 go run ./cmd/api
 ```
 
@@ -74,6 +75,7 @@ See [backend setup and verification](src/backend/README.md). Never commit creden
 
 ## Current status
 
-Business specification 1.0 is PO-approved. Backend R1 is verified: register/verify/session,
-adult onboarding, organizer approval, venue publication, match discovery and concurrency-safe
-free join run end-to-end through `/api/v1`. The next milestone is R2 paid hold/payment/cancellation.
+Business specification 1.0 is PO-approved. Backend R2 is verified through `/api/v1`: the R1
+identity/onboarding/venue/free-join journey plus paid holds, direct-transfer reporting and Host
+acknowledgement, cancellation/refund tracking, in-app/email notification obligations and reminders.
+The next milestone is R3 attendance, review, reliability and deterministic recommendations.

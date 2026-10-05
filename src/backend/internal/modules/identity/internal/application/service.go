@@ -222,6 +222,15 @@ func (s *Service) Authenticate(ctx context.Context, accessToken string) (Account
 	return s.store.AuthenticateAccess(ctx, hash, s.clock.Now().UTC())
 }
 
+// Account exposes the minimum account directory contract needed by other
+// modules without granting access to Identity tables.
+func (s *Service) Account(ctx context.Context, accountID string) (Account, error) {
+	if strings.TrimSpace(accountID) == "" {
+		return Account{}, ErrInvalidInput
+	}
+	return s.store.AccountByID(ctx, accountID)
+}
+
 // ForgotPassword deliberately returns nil for unknown emails.
 func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	canonical, err := CanonicalEmail(email)

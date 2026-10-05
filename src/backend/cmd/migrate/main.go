@@ -9,6 +9,8 @@ import (
 
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/notifications"
+	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/migrations"
@@ -39,6 +41,8 @@ func run() error {
 		players.Migrations(),
 		venues.Migrations(),
 		matches.Migrations(),
+		payments.Migrations(),
+		notifications.Migrations(),
 	)
 	if err != nil {
 		return err

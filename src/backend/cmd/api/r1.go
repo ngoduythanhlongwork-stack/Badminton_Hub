@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"badmintonhub/internal/config"
 	"badmintonhub/internal/httpapi"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/notifications"
+	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/clock"
@@ -18,9 +22,11 @@ import (
 )
 
 type r1Composition struct {
-	routes   httpapi.R1Routes
-	handlers map[string]outbox.Handler
-	email    *identity.CaptureEmailSender
+	routes            httpapi.R1Routes
+	handlers          map[string]outbox.Handler
+	email             *identity.CaptureEmailSender
+	notificationEmail *notifications.CaptureEmailSender
+	maintenance       func(context.Context) error
 }
 
 func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Composition, error) {
@@ -40,16 +46,86 @@ func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Co
 	if err != nil {
 		return r1Composition{}, err
 	}
+	paymentService, err := payments.NewService(pool, matchSettlement{matches: matchService}, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
+	notificationEmail := &notifications.CaptureEmailSender{}
+	notificationService, err := notifications.NewService(pool, accountDirectory{identity: identityService}, notificationEmail, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
 	email := &identity.CaptureEmailSender{}
 	emailHandler, err := identity.NewEmailOutboxHandler(email, []byte(cfg.IdentityTokenSecret))
 	if err != nil {
 		return r1Composition{}, err
 	}
 	return r1Composition{
-		routes:   httpapi.R1Routes{Identity: identityService, Players: playerService, Venues: venueService, Matches: matchService},
-		handlers: map[string]outbox.Handler{"identity.email": emailHandler},
-		email:    email,
+		routes: httpapi.R1Routes{Identity: identityService, Players: playerService, Venues: venueService, Matches: matchService, Payments: paymentService, Notifications: notificationService},
+		handlers: map[string]outbox.Handler{
+			"identity.email":              emailHandler,
+			"matches.payment-required":    paymentService.PaymentRequiredHandler(),
+			"payments.transfer-reported":  paymentService.TransferReportedHandler(),
+			"payments.deposit-satisfied":  paymentService.DepositSatisfiedHandler(),
+			"matches.joined":              notificationService.JoinedHandler(),
+			"payments.notification":       notificationService.PaymentEventHandler(),
+			"notifications.deliver-email": notificationService.EmailDeliveryHandler(),
+			"matches.cancelled":           combineHandlers(paymentService.CancellationHandler(), notificationService.CancellationHandler()),
+		},
+		email:             email,
+		notificationEmail: notificationEmail,
+		maintenance: func(ctx context.Context) error {
+			if _, err := matchService.ExpireDueHolds(ctx, 100); err != nil {
+				return fmt.Errorf("expire holds: %w", err)
+			}
+			if _, err := paymentService.MarkOverdue(ctx, 100); err != nil {
+				return fmt.Errorf("mark refunds overdue: %w", err)
+			}
+			if _, err := notificationService.DispatchDue(ctx, 100); err != nil {
+				return fmt.Errorf("dispatch notifications: %w", err)
+			}
+			return nil
+		},
 	}, nil
+}
+
+func combineHandlers(handlers ...outbox.Handler) outbox.Handler {
+	return func(ctx context.Context, message outbox.Message) error {
+		for _, handler := range handlers {
+			if err := handler(ctx, message); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+type matchSettlement struct{ matches matches.Service }
+
+func (adapter matchSettlement) ApplyTransferReport(ctx context.Context, playerID, participationID string, reportedAt time.Time) error {
+	_, err := adapter.matches.ApplyTransferReport(ctx, playerID, participationID, reportedAt)
+	if errors.Is(err, matches.ErrHoldExpired) {
+		return nil
+	}
+	return err
+}
+
+func (adapter matchSettlement) ConfirmPayment(ctx context.Context, hostID, participationID string, confirmedAt time.Time) (bool, error) {
+	_, err := adapter.matches.ConfirmPaymentAt(ctx, hostID, participationID, confirmedAt)
+	if errors.Is(err, matches.ErrHoldExpired) || errors.Is(err, matches.ErrFull) || errors.Is(err, matches.ErrScheduleConflict) || errors.Is(err, matches.ErrNotOpen) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+type accountDirectory struct{ identity *identity.Service }
+
+func (adapter accountDirectory) EmailForAccount(ctx context.Context, accountID string) (string, error) {
+	account, err := adapter.identity.Account(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	return account.Email, nil
 }
 
 type organizerEligibility struct{ players *players.Service }

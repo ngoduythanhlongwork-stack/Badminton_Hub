@@ -194,6 +194,22 @@ The API owns worker startup and cancellation and stops workers during graceful s
 bounded exponential backoff; domain-specific attempt limits/dead-letter operations are added with
 the first real notification/job workflow, when their operational requirements are known.
 
+## ADR-017 — Independent paid-join lifecycles and transactional notification
+
+Status: **Accepted — 2026-10-05**
+
+Matches owns participation, capacity, schedule and time-bounded holds. Payments owns fee snapshots,
+transfer reports, Host receipts and refund obligations. A transfer report never changes participation;
+after an acknowledged deposit, Matches rechecks the hold, match, capacity and schedule. Late money is
+retained by Payments and creates a refund obligation without restoring a slot. Cross-module effects use
+idempotent outbox events and explicit root-package contracts; neither module reads the other's schema.
+
+Notifications persists one obligation per source event/version, recipient, channel and purpose. In-app
+and email delivery state remain separate from business state. Email delivery is abandoned after three
+failed attempts, while the underlying join/payment/cancellation remains committed. The API also owns a
+PostgreSQL-backed maintenance loop for hold expiry, 48-hour refund overdue marking and due reminder
+dispatch. Redis is not involved in these correctness decisions.
+
 ## Open decisions
 
 1. Production email delivery provider (the port and local adapter direction are decided).

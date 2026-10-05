@@ -2,11 +2,11 @@
 
 Trạng thái: **READY FOR EXECUTION — 2026-10-04**
 Owner: Backend Team Lead
-Nguồn: PRD, D-01–D-25, bộ spec 1.0 và ADR-001–ADR-012.
+Nguồn: PRD, D-01–D-25, bộ spec 1.0 và ADR-001–ADR-017.
 
-Execution status: **Slices 0–3 verified; R1 CLOSED — 2026-10-04**. Identity/session,
-adult onboarding, organizer approval, venue publication, discovery and free join pass format,
-vet, unit, build, live PostgreSQL/Redis integration, capacity race and HTTP E2E checks.
+Execution status: **Slices 0–5 verified; R2 CLOSED — 2026-10-05**. R1 plus paid hold,
+manual transfer/receipt, cancellation/refund, notification/reminder pass format, vet, unit, build,
+live PostgreSQL/Redis integration, concurrency/redelivery checks and paid HTTP E2E.
 
 ## 1. Mục tiêu và nguyên tắc thực thi
 
@@ -32,7 +32,8 @@ Backend hiện có:
 - PostgreSQL/Redis connection foundation, `/health`, `/ready`.
 - Module-owned migration composition + `cmd/migrate`, stable HTTP errors/middleware,
   PostgreSQL transactional outbox/worker, isolated test database fixture và architecture guard.
-- Business schemas `identity`, `players`, `venues`, `matches`; `/api/v1` cho hành trình R1.
+- Business schemas `identity`, `players`, `venues`, `matches`, `payments`, `notifications`;
+  `/api/v1` cho hành trình R2.
 - Opaque session rotation, token-hash-only email workflow, scoped permissions và bootstrap Admin có audit.
 - PostgreSQL-guarded free join, schedule/capacity/idempotency và E2E onboard → publish → join.
 
@@ -276,6 +277,6 @@ Definition of Done cho mỗi slice:
 
 ## 9. Việc đầu tiên cho agent BE
 
-Slices 0–3 đã được implement và R1 đã đóng. Không tạo toàn bộ ERD MVP upfront.
-Task tiếp theo là Slice 4 (paid hold và transfer acknowledgement), giữ độc lập lifecycle
-participation/hold/payment và các invariant D-13/D-16.
+Slices 0–5 đã được implement và R2 đã đóng. Không tạo toàn bộ ERD MVP upfront.
+Task tiếp theo là Slice 6 (attendance, completion, review và reliability), giữ correction history,
+không tự suy no-show và không dùng attendance `UNKNOWN` làm trust signal.

@@ -13,15 +13,19 @@ import (
 
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/notifications"
+	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
 	"badmintonhub/internal/modules/venues"
 )
 
 type R1Routes struct {
-	Identity *identity.Service
-	Players  *players.Service
-	Venues   venues.Service
-	Matches  matches.Service
+	Identity      *identity.Service
+	Players       *players.Service
+	Venues        venues.Service
+	Matches       matches.Service
+	Payments      *payments.Service
+	Notifications *notifications.Service
 }
 
 func (routes R1Routes) Register(mux *http.ServeMux) {
@@ -60,6 +64,7 @@ func (routes R1Routes) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/approve", routes.auth(http.HandlerFunc(routes.approveParticipation)))
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/reject", routes.auth(http.HandlerFunc(routes.rejectParticipation)))
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/remove", routes.auth(http.HandlerFunc(routes.removeParticipation)))
+	routes.registerR2(mux)
 }
 
 func (routes R1Routes) auth(next http.Handler) http.Handler {
@@ -494,27 +499,31 @@ func venueResponse(venue venues.Venue) map[string]any {
 }
 
 type matchDraftRequest struct {
-	Title         string           `json:"title"`
-	Description   string           `json:"description"`
-	Format        string           `json:"format"`
-	Style         string           `json:"style"`
-	Rules         string           `json:"rules"`
-	VenueID       string           `json:"venueId"`
-	Court         string           `json:"court"`
-	StartAt       time.Time        `json:"startAt"`
-	EndAt         time.Time        `json:"endAt"`
-	MinLevel      int              `json:"minLevel"`
-	MaxLevel      int              `json:"maxLevel"`
-	Capacity      int              `json:"capacity"`
-	FeeMinor      int64            `json:"feeMinor"`
-	Currency      string           `json:"currency"`
-	JoinMode      matches.JoinMode `json:"joinMode"`
-	HostPlays     bool             `json:"hostPlays"`
-	CourtAttested bool             `json:"courtAttested"`
+	Title                     string           `json:"title"`
+	Description               string           `json:"description"`
+	Format                    string           `json:"format"`
+	Style                     string           `json:"style"`
+	Rules                     string           `json:"rules"`
+	VenueID                   string           `json:"venueId"`
+	Court                     string           `json:"court"`
+	StartAt                   time.Time        `json:"startAt"`
+	EndAt                     time.Time        `json:"endAt"`
+	MinLevel                  int              `json:"minLevel"`
+	MaxLevel                  int              `json:"maxLevel"`
+	Capacity                  int              `json:"capacity"`
+	FeeMinor                  int64            `json:"feeMinor"`
+	DepositMinor              int64            `json:"depositMinor"`
+	Currency                  string           `json:"currency"`
+	PaymentRecipient          string           `json:"paymentRecipient"`
+	PaymentInstructions       string           `json:"paymentInstructions"`
+	PaymentInstructionVersion int              `json:"paymentInstructionVersion"`
+	JoinMode                  matches.JoinMode `json:"joinMode"`
+	HostPlays                 bool             `json:"hostPlays"`
+	CourtAttested             bool             `json:"courtAttested"`
 }
 
 func (body matchDraftRequest) draft() matches.Draft {
-	return matches.Draft{Title: body.Title, Description: body.Description, Format: body.Format, Style: body.Style, Rules: body.Rules, VenueID: body.VenueID, Court: body.Court, StartAt: body.StartAt, EndAt: body.EndAt, MinLevel: body.MinLevel, MaxLevel: body.MaxLevel, Capacity: body.Capacity, FeeMinor: body.FeeMinor, Currency: body.Currency, JoinMode: body.JoinMode, HostPlays: body.HostPlays, CourtAttested: body.CourtAttested}
+	return matches.Draft{Title: body.Title, Description: body.Description, Format: body.Format, Style: body.Style, Rules: body.Rules, VenueID: body.VenueID, Court: body.Court, StartAt: body.StartAt, EndAt: body.EndAt, MinLevel: body.MinLevel, MaxLevel: body.MaxLevel, Capacity: body.Capacity, FeeMinor: body.FeeMinor, DepositMinor: body.DepositMinor, Currency: body.Currency, PaymentRecipient: body.PaymentRecipient, PaymentInstructions: body.PaymentInstructions, PaymentInstructionVersion: body.PaymentInstructionVersion, JoinMode: body.JoinMode, HostPlays: body.HostPlays, CourtAttested: body.CourtAttested}
 }
 
 func (routes R1Routes) createMatch(w http.ResponseWriter, r *http.Request) {
@@ -645,11 +654,15 @@ func (routes R1Routes) matchDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func matchResponse(match matches.Match) map[string]any {
-	return map[string]any{"id": match.ID, "hostId": match.HostID, "title": match.Title, "description": match.Description, "format": match.Format, "style": match.Style, "rules": match.Rules, "venue": map[string]any{"id": match.Venue.ID, "name": match.Venue.Name, "address": match.Venue.Address, "area": match.Venue.Area, "timeZone": match.Venue.TimeZone, "court": match.Venue.Court}, "startAt": match.StartAt, "endAt": match.EndAt, "minLevel": match.MinLevel, "maxLevel": match.MaxLevel, "capacity": match.Capacity, "occupied": match.Occupied, "feeMinor": match.FeeMinor, "currency": match.Currency, "joinMode": match.JoinMode, "hostPlays": match.HostPlays, "courtAttestation": map[string]any{"source": "HOST", "attested": match.CourtAttested, "attestedAt": match.CourtAttestedAt, "bookingGuaranteed": false}, "status": match.Status, "updatedAt": match.UpdatedAt}
+	return map[string]any{"id": match.ID, "hostId": match.HostID, "title": match.Title, "description": match.Description, "format": match.Format, "style": match.Style, "rules": match.Rules, "venue": map[string]any{"id": match.Venue.ID, "name": match.Venue.Name, "address": match.Venue.Address, "area": match.Venue.Area, "timeZone": match.Venue.TimeZone, "court": match.Venue.Court}, "startAt": match.StartAt, "endAt": match.EndAt, "minLevel": match.MinLevel, "maxLevel": match.MaxLevel, "capacity": match.Capacity, "occupied": match.Occupied, "feeMinor": match.FeeMinor, "depositMinor": match.DepositMinor, "currency": match.Currency, "joinMode": match.JoinMode, "hostPlays": match.HostPlays, "cancellationPolicyVersion": match.CancellationPolicyVersion, "courtAttestation": map[string]any{"source": "HOST", "attested": match.CourtAttested, "attestedAt": match.CourtAttestedAt, "bookingGuaranteed": false}, "status": match.Status, "updatedAt": match.UpdatedAt}
 }
 
 func participationResponse(participation matches.Participation) map[string]any {
-	return map[string]any{"id": participation.ID, "matchId": participation.MatchID, "playerId": participation.PlayerID, "status": participation.Status, "decisionReason": participation.DecisionReason, "createdAt": participation.CreatedAt, "updatedAt": participation.UpdatedAt}
+	response := map[string]any{"id": participation.ID, "matchId": participation.MatchID, "playerId": participation.PlayerID, "status": participation.Status, "decisionReason": participation.DecisionReason, "createdAt": participation.CreatedAt, "updatedAt": participation.UpdatedAt}
+	if participation.Hold != nil {
+		response["hold"] = map[string]any{"status": participation.Hold.Status, "expiresAt": participation.Hold.ExpiresAt, "transferReportedAt": participation.Hold.TransferReportedAt}
+	}
+	return response
 }
 
 func queryInt(r *http.Request, name string, fallback int) (int, bool) {
@@ -714,27 +727,29 @@ func (routes R1Routes) writeDomainError(w http.ResponseWriter, r *http.Request, 
 		status, code, message = http.StatusConflict, "email_already_registered", "Email này đã được đăng ký."
 	case errors.Is(err, identity.ErrAccountUnavailable):
 		status, code, message = http.StatusForbidden, "account_unavailable", "Tài khoản hiện không thể thực hiện thao tác này."
-	case errors.Is(err, identity.ErrForbidden), errors.Is(err, venues.ErrForbidden), errors.Is(err, matches.ErrForbidden):
+	case errors.Is(err, identity.ErrForbidden), errors.Is(err, venues.ErrForbidden), errors.Is(err, matches.ErrForbidden), errors.Is(err, payments.ErrForbidden), errors.Is(err, notifications.ErrForbidden):
 		status, code, message = http.StatusForbidden, "forbidden", "Bạn không có quyền thực hiện thao tác này."
-	case errors.Is(err, identity.ErrConflict), errors.Is(err, players.ErrConflict), errors.Is(err, matches.ErrIdempotencyConflict):
+	case errors.Is(err, identity.ErrConflict), errors.Is(err, players.ErrConflict), errors.Is(err, matches.ErrIdempotencyConflict), errors.Is(err, payments.ErrConflict), errors.Is(err, payments.ErrIdempotencyConflict), errors.Is(err, payments.ErrRefundLimit):
 		status, code, message = http.StatusConflict, "conflict", "Dữ liệu đã thay đổi hoặc yêu cầu xung đột."
 	case errors.Is(err, players.ErrUnderage):
 		status, code, message = http.StatusUnprocessableEntity, "adult_eligibility_required", "Pilot chỉ dành cho người chơi từ 18 tuổi."
 	case errors.Is(err, players.ErrDateOfBirthFixed):
 		status, code, message = http.StatusConflict, "date_of_birth_locked", "Ngày sinh sau khi hoàn tất onboarding chỉ có thể sửa qua quy trình hỗ trợ."
-	case errors.Is(err, players.ErrNotFound), errors.Is(err, venues.ErrNotFound), errors.Is(err, venues.ErrNotPublished), errors.Is(err, matches.ErrNotFound):
+	case errors.Is(err, players.ErrNotFound), errors.Is(err, venues.ErrNotFound), errors.Is(err, venues.ErrNotPublished), errors.Is(err, matches.ErrNotFound), errors.Is(err, payments.ErrNotFound), errors.Is(err, notifications.ErrNotFound):
 		status, code, message = http.StatusNotFound, "not_found", "Không tìm thấy dữ liệu yêu cầu."
 	case errors.Is(err, matches.ErrFull):
 		status, code, message = http.StatusConflict, "match_full", "Kèo đã hết chỗ."
+	case errors.Is(err, matches.ErrCapacityBelowOccupied):
+		status, code, message = http.StatusConflict, "capacity_below_occupied", "Sức chứa không thể thấp hơn số suất đang được giữ hoặc đã xác nhận."
 	case errors.Is(err, matches.ErrScheduleConflict):
 		status, code, message = http.StatusConflict, "schedule_conflict", "Bạn đã có kèo trùng thời gian."
 	case errors.Is(err, matches.ErrAlreadyParticipating):
 		status, code, message = http.StatusConflict, "already_participating", "Bạn đã có lượt tham gia kèo này."
 	case errors.Is(err, matches.ErrNotOpen):
 		status, code, message = http.StatusConflict, "match_not_open", "Kèo hiện không còn nhận người chơi."
-	case errors.Is(err, matches.ErrPaidUnsupported):
-		status, code, message = http.StatusUnprocessableEntity, "paid_match_not_available", "R1 chỉ hỗ trợ kèo miễn phí."
-	case errors.Is(err, identity.ErrInvalidInput), errors.Is(err, players.ErrInvalidProfile), errors.Is(err, venues.ErrInvalid), errors.Is(err, matches.ErrInvalid):
+	case errors.Is(err, matches.ErrHoldExpired):
+		status, code, message = http.StatusConflict, "payment_hold_expired", "Thời hạn giữ chỗ đã hết; khoản tiền được xử lý riêng nếu Host xác nhận đã nhận."
+	case errors.Is(err, identity.ErrInvalidInput), errors.Is(err, players.ErrInvalidProfile), errors.Is(err, venues.ErrInvalid), errors.Is(err, matches.ErrInvalid), errors.Is(err, payments.ErrInvalid), errors.Is(err, notifications.ErrInvalid):
 		status, code, message = http.StatusBadRequest, "validation_failed", "Dữ liệu gửi lên không hợp lệ."
 	}
 	WriteError(w, r, status, code, message)

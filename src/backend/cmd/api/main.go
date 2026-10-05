@@ -64,6 +64,7 @@ func run(logger *slog.Logger) (runErr error) {
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
 	worker := startWorker(ctx, outbox.Worker{Pool: clients.Postgres, Handlers: r1.handlers, Logger: logger})
+	maintenance := startMaintenance(ctx, r1.maintenance, logger)
 	defer func() {
 		if err := worker.Stop(10 * time.Second); err != nil {
 			if runErr == nil {
@@ -71,6 +72,11 @@ func run(logger *slog.Logger) (runErr error) {
 			} else if !errors.Is(runErr, err) {
 				logger.Error("Outbox worker did not stop cleanly", "error", err)
 			}
+		}
+	}()
+	defer func() {
+		if err := maintenance.Stop(10 * time.Second); err != nil && runErr == nil {
+			runErr = err
 		}
 	}()
 	logger.Info("API starting", "address", cfg.HTTPAddr)
@@ -96,9 +102,35 @@ func run(logger *slog.Logger) (runErr error) {
 			return fmt.Errorf("outbox worker stopped unexpectedly: %w", worker.err)
 		}
 		return errors.New("outbox worker stopped unexpectedly")
+	case <-maintenance.done:
+		if ctx.Err() != nil {
+			return shutdownServer(server, result, logger)
+		}
+		return errors.New("maintenance worker stopped unexpectedly")
 	case <-ctx.Done():
 		return shutdownServer(server, result, logger)
 	}
+}
+
+func startMaintenance(parent context.Context, runOnce func(context.Context) error, logger *slog.Logger) *managedWorker {
+	ctx, cancel := context.WithCancel(parent)
+	managed := &managedWorker{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer close(managed.done)
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			if err := runOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Warn("R2 maintenance pass failed", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return managed
 }
 
 type managedWorker struct {
