@@ -4,9 +4,9 @@ Trạng thái: **READY FOR EXECUTION — 2026-10-04**
 Owner: Backend Team Lead
 Nguồn: PRD, D-01–D-25, bộ spec 1.0 và ADR-001–ADR-017.
 
-Execution status: **Slices 0–5 verified; R2 CLOSED — 2026-10-05**. R1 plus paid hold,
-manual transfer/receipt, cancellation/refund, notification/reminder pass format, vet, unit, build,
-live PostgreSQL/Redis integration, concurrency/redelivery checks and paid HTTP E2E.
+Execution status: **Slices 0–8 verified; R3 CLOSED — 2026-10-06**. The closed-loop MVP from
+onboarding through play, review, correction-aware trust, deterministic recommendation and measurement
+passes format, vet, unit, build, live PostgreSQL/Redis integration and HTTP E2E verification.
 
 ## 1. Mục tiêu và nguyên tắc thực thi
 
@@ -275,8 +275,8 @@ Definition of Done cho mỗi slice:
 | Recommendation đọc chéo bảng | Contract/read model owner-controlled; architecture test |
 | Scope phình thành booking/social | Review PRD/out-of-scope ở đầu mỗi slice |
 
-## 9. Việc đầu tiên cho agent BE
+## 9. Trạng thái bàn giao sau R3
 
-Slices 0–5 đã được implement và R2 đã đóng. Không tạo toàn bộ ERD MVP upfront.
-Task tiếp theo là Slice 6 (attendance, completion, review và reliability), giữ correction history,
-không tự suy no-show và không dùng attendance `UNKNOWN` làm trust signal.
+Slices 0–8 đã được implement và R3 đã đóng. Bước tiếp theo là pilot hardening: nối production email,
+chọn object storage/map provider, quan sát hiệu năng trên đúng dataset D-24 và tích hợp web theo API hiện có.
+Không đưa Phase 2 vào backend nếu PRD chưa được PO sửa có chủ đích.

@@ -11,21 +11,28 @@ import (
 	"strings"
 	"time"
 
+	"badmintonhub/internal/modules/communication"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/moderation"
 	"badmintonhub/internal/modules/notifications"
 	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/recommendations"
 	"badmintonhub/internal/modules/venues"
 )
 
 type R1Routes struct {
-	Identity      *identity.Service
-	Players       *players.Service
-	Venues        venues.Service
-	Matches       matches.Service
-	Payments      *payments.Service
-	Notifications *notifications.Service
+	Identity        *identity.Service
+	Players         *players.Service
+	Venues          venues.Service
+	Matches         matches.Service
+	Payments        *payments.Service
+	Notifications   *notifications.Service
+	Communication   *communication.Service
+	Moderation      *moderation.Service
+	Recommendations *recommendations.Service
+	Measurement     *recommendations.Measurement
 }
 
 func (routes R1Routes) Register(mux *http.ServeMux) {
@@ -65,6 +72,7 @@ func (routes R1Routes) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/reject", routes.auth(http.HandlerFunc(routes.rejectParticipation)))
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/remove", routes.auth(http.HandlerFunc(routes.removeParticipation)))
 	routes.registerR2(mux)
+	routes.registerR3(mux)
 }
 
 func (routes R1Routes) auth(next http.Handler) http.Handler {
@@ -281,7 +289,7 @@ func (routes R1Routes) publicPlayer(w http.ResponseWriter, r *http.Request) {
 		routes.writeDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"accountId": profile.AccountID, "displayName": profile.DisplayName, "skillLevel": profile.SkillLevel, "reliability": profile.Reliability, "matchCount": profile.MatchCount})
+	writeJSON(w, map[string]any{"accountId": profile.AccountID, "displayName": profile.DisplayName, "skillLevel": profile.SkillLevel, "reliability": profile.Reliability, "reliabilityScore": profile.ReliabilityScore, "reliabilitySampleSize": profile.ReliabilitySampleSize, "matchCount": profile.MatchCount})
 }
 
 func (body onboardingRequest) draft() (players.Draft, error) {
@@ -729,13 +737,13 @@ func (routes R1Routes) writeDomainError(w http.ResponseWriter, r *http.Request, 
 		status, code, message = http.StatusForbidden, "account_unavailable", "Tài khoản hiện không thể thực hiện thao tác này."
 	case errors.Is(err, identity.ErrForbidden), errors.Is(err, venues.ErrForbidden), errors.Is(err, matches.ErrForbidden), errors.Is(err, payments.ErrForbidden), errors.Is(err, notifications.ErrForbidden):
 		status, code, message = http.StatusForbidden, "forbidden", "Bạn không có quyền thực hiện thao tác này."
-	case errors.Is(err, identity.ErrConflict), errors.Is(err, players.ErrConflict), errors.Is(err, matches.ErrIdempotencyConflict), errors.Is(err, payments.ErrConflict), errors.Is(err, payments.ErrIdempotencyConflict), errors.Is(err, payments.ErrRefundLimit):
+	case errors.Is(err, identity.ErrConflict), errors.Is(err, players.ErrConflict), errors.Is(err, matches.ErrIdempotencyConflict), errors.Is(err, payments.ErrConflict), errors.Is(err, payments.ErrIdempotencyConflict), errors.Is(err, payments.ErrRefundLimit), errors.Is(err, communication.ErrConflict), errors.Is(err, moderation.ErrConflict):
 		status, code, message = http.StatusConflict, "conflict", "Dữ liệu đã thay đổi hoặc yêu cầu xung đột."
 	case errors.Is(err, players.ErrUnderage):
 		status, code, message = http.StatusUnprocessableEntity, "adult_eligibility_required", "Pilot chỉ dành cho người chơi từ 18 tuổi."
 	case errors.Is(err, players.ErrDateOfBirthFixed):
 		status, code, message = http.StatusConflict, "date_of_birth_locked", "Ngày sinh sau khi hoàn tất onboarding chỉ có thể sửa qua quy trình hỗ trợ."
-	case errors.Is(err, players.ErrNotFound), errors.Is(err, venues.ErrNotFound), errors.Is(err, venues.ErrNotPublished), errors.Is(err, matches.ErrNotFound), errors.Is(err, payments.ErrNotFound), errors.Is(err, notifications.ErrNotFound):
+	case errors.Is(err, players.ErrNotFound), errors.Is(err, venues.ErrNotFound), errors.Is(err, venues.ErrNotPublished), errors.Is(err, matches.ErrNotFound), errors.Is(err, payments.ErrNotFound), errors.Is(err, notifications.ErrNotFound), errors.Is(err, moderation.ErrNotFound):
 		status, code, message = http.StatusNotFound, "not_found", "Không tìm thấy dữ liệu yêu cầu."
 	case errors.Is(err, matches.ErrFull):
 		status, code, message = http.StatusConflict, "match_full", "Kèo đã hết chỗ."
@@ -749,7 +757,15 @@ func (routes R1Routes) writeDomainError(w http.ResponseWriter, r *http.Request, 
 		status, code, message = http.StatusConflict, "match_not_open", "Kèo hiện không còn nhận người chơi."
 	case errors.Is(err, matches.ErrHoldExpired):
 		status, code, message = http.StatusConflict, "payment_hold_expired", "Thời hạn giữ chỗ đã hết; khoản tiền được xử lý riêng nếu Host xác nhận đã nhận."
-	case errors.Is(err, identity.ErrInvalidInput), errors.Is(err, players.ErrInvalidProfile), errors.Is(err, venues.ErrInvalid), errors.Is(err, matches.ErrInvalid), errors.Is(err, payments.ErrInvalid), errors.Is(err, notifications.ErrInvalid):
+	case errors.Is(err, matches.ErrAttendanceWindow):
+		status, code, message = http.StatusConflict, "attendance_window_closed", "Ngoài thời gian ghi hoặc sửa điểm danh."
+	case errors.Is(err, matches.ErrReviewWindow):
+		status, code, message = http.StatusConflict, "review_window_closed", "Thời hạn đánh giá 7 ngày đã kết thúc."
+	case errors.Is(err, matches.ErrReviewNotAllowed):
+		status, code, message = http.StatusForbidden, "review_not_allowed", "Chỉ người chơi đã được xác nhận có mặt mới được đánh giá."
+	case errors.Is(err, communication.ErrForbidden), errors.Is(err, moderation.ErrForbidden):
+		status, code, message = http.StatusForbidden, "forbidden", "Bạn không có quyền thực hiện thao tác này."
+	case errors.Is(err, identity.ErrInvalidInput), errors.Is(err, players.ErrInvalidProfile), errors.Is(err, venues.ErrInvalid), errors.Is(err, matches.ErrInvalid), errors.Is(err, payments.ErrInvalid), errors.Is(err, notifications.ErrInvalid), errors.Is(err, communication.ErrInvalid), errors.Is(err, moderation.ErrInvalid):
 		status, code, message = http.StatusBadRequest, "validation_failed", "Dữ liệu gửi lên không hợp lệ."
 	}
 	WriteError(w, r, status, code, message)

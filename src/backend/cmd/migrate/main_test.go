@@ -3,21 +3,24 @@ package main
 import (
 	"testing"
 
+	"badmintonhub/internal/modules/communication"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/moderation"
 	"badmintonhub/internal/modules/notifications"
 	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/recommendations"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/migrations"
 )
 
 func TestR1MigrationManifestIsOrderedAndComplete(t *testing.T) {
-	manifest, err := migrations.Compose(migrations.PlatformCatalog(), identity.Migrations(), players.Migrations(), venues.Migrations(), matches.Migrations(), payments.Migrations(), notifications.Migrations())
+	manifest, err := migrations.Compose(migrations.PlatformCatalog(), identity.Migrations(), players.Migrations(), venues.Migrations(), matches.Migrations(), payments.Migrations(), notifications.Migrations(), communication.Migrations(), moderation.Migrations(), recommendations.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest) != 8 {
+	if len(manifest) != 13 {
 		t.Fatalf("migration count=%d", len(manifest))
 	}
 	for index, migration := range manifest {

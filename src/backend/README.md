@@ -80,11 +80,12 @@ the configured database untouched.
 Unit tests require no running services and cover readiness failures/deadlines,
 liveness independence and invalid configuration.
 
-## R2 API and operator bootstrap
+## R3 API and operator bootstrap
 
 Business routes live under `/api/v1`: authentication and recovery, owner onboarding,
 public player projection, organizer review, venue management/discovery, match draft/publish/search,
-free/paid instant or approval join, payment ledger, cancellation/refund and notification inbox.
+free/paid instant or approval join, payment ledger, cancellation/refund, notification inbox,
+attendance/review, match room, moderation, recommendation and attendance measurement.
 Commands that may duplicate effects require `Idempotency-Key`.
 
 Paid matches keep participation, hold and money states independent. A Player transfer report does
@@ -92,8 +93,9 @@ not confirm receipt or joining. Hosts acknowledge actual receipts; Matches then 
 hold, capacity and schedule. Payment instructions/evidence are returned only to the payer, payee or
 an authorized future case workflow. Refunds remain open until the Player confirms or disputes them.
 
-The API maintenance loop expires holds, marks 48-hour refunds overdue and dispatches due 24h/2h
-reminders. PostgreSQL remains authoritative when Redis is unavailable. Local development uses an
+The API maintenance loop expires holds, completes matches after `end+24h`, marks unresolved
+attendance as `UNKNOWN`, marks 48-hour refunds overdue and dispatches due 24h/2h reminders.
+PostgreSQL remains authoritative when Redis is unavailable. Local development uses an
 in-memory capture adapter for notification email; select and verify a production provider before pilot.
 
 Verification/reset delivery uses the PostgreSQL outbox. The database stores only token hashes and
@@ -121,8 +123,8 @@ go run ./cmd/bootstrap-admin
 - internal/httpapi: HTTP routing, liveness and readiness.
 - internal/modules/<module>: bounded business modules.
 
-R2 is closed. The next vertical slice is attendance, completion, review and reliability. Do not
-add gateway/court-booking behavior or merge payment/refund state into participation.
+R3 is closed. The backend MVP loop is ready for pilot hardening and web integration. Do not add
+Phase 2 community scope, gateway/court-booking behavior, or merge payment/refund state into participation.
 
 Expose cross-module contracts from each module's root package. Put private code
 under the module's own internal/ directory. Future modules own their SQL/migrations;

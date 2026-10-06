@@ -682,6 +682,14 @@ func (r *PostgresRepository) CancelParticipation(ctx context.Context, player, pa
 			return Participation{}, err
 		}
 	}
+	if previous == ParticipationJoined && now.After(m.StartAt.Add(-6*time.Hour)) {
+		value := 0.5
+		eventID, _ := id.New()
+		event := TrustSignalEvent{EventID: eventID, AccountID: p.PlayerID, SourceType: "LATE_CANCEL", SourceID: p.ID, SourceRevision: 1, MatchID: p.MatchID, ReliabilityValue: &value, OccurredAt: now}
+		if _, err = outbox.Enqueue(ctx, tx, "matches.trust-signal", "late-cancel:"+p.ID+":1", event, now); err != nil {
+			return Participation{}, err
+		}
+	}
 	if err = r.refresh(ctx, tx, m.ID, m.Capacity, now); err != nil {
 		return Participation{}, err
 	}

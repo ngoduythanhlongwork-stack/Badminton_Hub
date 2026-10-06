@@ -15,9 +15,11 @@ import (
 	"badmintonhub/internal/httpapi"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/moderation"
 	"badmintonhub/internal/modules/notifications"
 	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/recommendations"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/migrations"
 	"badmintonhub/internal/platform/outbox"
@@ -28,7 +30,7 @@ import (
 func TestR2PaidCancellationJourneyOverHTTP(t *testing.T) {
 	ctx := context.Background()
 	pool := testdb.Open(t)
-	runner, err := migrations.NewRunner(pool, identity.Migrations(), players.Migrations(), venues.Migrations(), matches.Migrations(), payments.Migrations(), notifications.Migrations())
+	runner, err := migrations.NewRunner(pool, identity.Migrations(), players.Migrations(), venues.Migrations(), matches.Migrations(), payments.Migrations(), notifications.Migrations(), moderation.Migrations(), recommendations.Migrations())
 	if err != nil {
 		t.Fatal(err)
 	}

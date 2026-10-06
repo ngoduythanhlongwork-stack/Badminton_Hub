@@ -11,6 +11,7 @@ import (
 
 type DBTX interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
@@ -22,14 +23,16 @@ func (r *PostgresRepository) Get(ctx context.Context, accountID string) (OwnerPr
 	const query = `SELECT account_id::text, onboarding_status, display_name, avatar_url,
 date_of_birth::text, gender, experience, skill_level, preferred_formats, play_styles,
 usual_periods, regular_area, skill_confidence, reliability_label, match_count,
-completed_at, updated_at, version FROM players.profiles WHERE account_id = $1`
+completed_at, updated_at, version, reliability_score::float8, reliability_sample_size,
+skill_feedback_count, level_review_suggested FROM players.profiles WHERE account_id = $1`
 	var p OwnerProfile
 	var dob *string
 	var gender, experience, skill *string
 	var formats, styles, periods []string
 	err := r.db.QueryRow(ctx, query, accountID).Scan(&p.AccountID, &p.Status, &p.DisplayName, &p.AvatarURL,
 		&dob, &gender, &experience, &skill, &formats, &styles, &periods, &p.RegularArea,
-		&p.SkillConfidence, &p.Reliability, &p.MatchCount, &p.CompletedAt, &p.UpdatedAt, &p.Version)
+		&p.SkillConfidence, &p.Reliability, &p.MatchCount, &p.CompletedAt, &p.UpdatedAt, &p.Version,
+		&p.ReliabilityScore, &p.ReliabilitySampleSize, &p.SkillFeedbackCount, &p.LevelReviewSuggested)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return OwnerProfile{}, ErrNotFound
 	}
@@ -89,6 +92,27 @@ WHERE account_id=$1 AND version=$18 RETURNING version`
 	}
 	p.Version = version
 	return p, nil
+}
+
+func (r *PostgresRepository) Reliabilities(ctx context.Context, accountIDs []string) (map[string]ReliabilityLabel, error) {
+	result := make(map[string]ReliabilityLabel, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return result, nil
+	}
+	rows, err := r.db.Query(ctx, `SELECT account_id::text,reliability_label FROM players.profiles WHERE account_id = ANY($1::uuid[])`, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var label ReliabilityLabel
+		if err = rows.Scan(&id, &label); err != nil {
+			return nil, err
+		}
+		result[id] = label
+	}
+	return result, rows.Err()
 }
 
 func profileArgs(p OwnerProfile) []any {

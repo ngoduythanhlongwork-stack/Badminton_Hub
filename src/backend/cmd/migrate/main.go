@@ -7,11 +7,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"badmintonhub/internal/modules/communication"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/moderation"
 	"badmintonhub/internal/modules/notifications"
 	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/recommendations"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,9 +41,12 @@ func run() error {
 	defer pool.Close()
 	runner, err := migrations.NewRunner(pool,
 		identity.Migrations(),
+		communication.Migrations(),
 		players.Migrations(),
+		recommendations.Migrations(),
 		venues.Migrations(),
 		matches.Migrations(),
+		moderation.Migrations(),
 		payments.Migrations(),
 		notifications.Migrations(),
 	)

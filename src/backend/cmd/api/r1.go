@@ -10,11 +10,14 @@ import (
 
 	"badmintonhub/internal/config"
 	"badmintonhub/internal/httpapi"
+	"badmintonhub/internal/modules/communication"
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
+	"badmintonhub/internal/modules/moderation"
 	"badmintonhub/internal/modules/notifications"
 	"badmintonhub/internal/modules/payments"
 	"badmintonhub/internal/modules/players"
+	"badmintonhub/internal/modules/recommendations"
 	"badmintonhub/internal/modules/venues"
 	"badmintonhub/internal/platform/clock"
 	"badmintonhub/internal/platform/outbox"
@@ -42,7 +45,11 @@ func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Co
 	if err != nil {
 		return r1Composition{}, err
 	}
-	matchService, err := matches.NewService(matches.NewPostgresRepository(pool), publishEligibility{identity: identityService, players: playerService}, joinEligibility{players: playerService}, venueCatalog{venues: venueService}, nil)
+	moderationService, err := moderation.NewService(pool, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
+	matchService, err := matches.NewService(matches.NewPostgresRepository(pool), publishEligibility{identity: identityService, players: playerService}, joinEligibility{players: playerService}, venueCatalog{venues: venueService}, nil, moderationService)
 	if err != nil {
 		return r1Composition{}, err
 	}
@@ -55,26 +62,44 @@ func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Co
 	if err != nil {
 		return r1Composition{}, err
 	}
+	trustProcessor, err := players.NewTrustProcessor(pool, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
+	communicationService, err := communication.NewService(pool, roomAccess{matches: matchService}, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
+	recommendationService, err := recommendations.NewService(pool, recommendationProfiles{players: playerService}, recommendationCandidates{matches: matchService}, moderationService, clock.System{})
+	if err != nil {
+		return r1Composition{}, err
+	}
+	measurement := recommendations.NewMeasurement(pool, clock.System{})
 	email := &identity.CaptureEmailSender{}
 	emailHandler, err := identity.NewEmailOutboxHandler(email, []byte(cfg.IdentityTokenSecret))
 	if err != nil {
 		return r1Composition{}, err
 	}
 	return r1Composition{
-		routes: httpapi.R1Routes{Identity: identityService, Players: playerService, Venues: venueService, Matches: matchService, Payments: paymentService, Notifications: notificationService},
+		routes: httpapi.R1Routes{Identity: identityService, Players: playerService, Venues: venueService, Matches: matchService, Payments: paymentService, Notifications: notificationService, Communication: communicationService, Moderation: moderationService, Recommendations: recommendationService, Measurement: measurement},
 		handlers: map[string]outbox.Handler{
 			"identity.email":              emailHandler,
 			"matches.payment-required":    paymentService.PaymentRequiredHandler(),
-			"payments.transfer-reported":  paymentService.TransferReportedHandler(),
-			"payments.deposit-satisfied":  paymentService.DepositSatisfiedHandler(),
-			"matches.joined":              notificationService.JoinedHandler(),
+			"payments.transfer-reported":  combineHandlers(paymentService.TransferReportedHandler(), measurement.OutcomeHandler("TransferReported")),
+			"payments.deposit-satisfied":  combineHandlers(paymentService.DepositSatisfiedHandler(), measurement.OutcomeHandler("ReceiptAcknowledged")),
+			"matches.joined":              combineHandlers(notificationService.JoinedHandler(), measurement.OutcomeHandler("JoinConfirmed")),
 			"payments.notification":       notificationService.PaymentEventHandler(),
 			"notifications.deliver-email": notificationService.EmailDeliveryHandler(),
-			"matches.cancelled":           combineHandlers(paymentService.CancellationHandler(), notificationService.CancellationHandler()),
+			"matches.cancelled":           combineHandlers(paymentService.CancellationHandler(), notificationService.CancellationHandler(), measurement.OutcomeHandler("ParticipationCancelled")),
+			"matches.trust-signal":        combineHandlers(trustProcessor.Handler(), measurement.TrustSignalHandler()),
+			"matches.completed":           measurement.OutcomeHandler("MatchCompleted"),
 		},
 		email:             email,
 		notificationEmail: notificationEmail,
 		maintenance: func(ctx context.Context) error {
+			if _, err := matchService.CompleteDueMatches(ctx, 100); err != nil {
+				return fmt.Errorf("complete due matches: %w", err)
+			}
 			if _, err := matchService.ExpireDueHolds(ctx, 100); err != nil {
 				return fmt.Errorf("expire holds: %w", err)
 			}
@@ -87,6 +112,45 @@ func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Co
 			return nil
 		},
 	}, nil
+}
+
+type roomAccess struct{ matches matches.Service }
+
+func (a roomAccess) RoomAccess(ctx context.Context, accountID, matchID string) (communication.Access, error) {
+	v, err := a.matches.RoomAccess(ctx, accountID, matchID)
+	return communication.Access{CanRead: v.CanRead, CanSend: v.CanSend, ReadThrough: v.ReadThrough}, err
+}
+
+type recommendationProfiles struct{ players *players.Service }
+
+func (a recommendationProfiles) RecommendationProfile(ctx context.Context, accountID string) (recommendations.Profile, error) {
+	p, e := a.players.RecommendationProfile(ctx, accountID)
+	return recommendations.Profile{AccountID: p.AccountID, SkillLevel: p.SkillLevel, Formats: p.Formats, Styles: p.Styles, Periods: p.Periods, Area: p.Area, Reliability: string(p.Reliability)}, e
+}
+func (a recommendationProfiles) HostReliabilities(ctx context.Context, accountIDs []string) (map[string]string, error) {
+	values, e := a.players.HostReliabilities(ctx, accountIDs)
+	if e != nil {
+		return nil, e
+	}
+	result := make(map[string]string, len(values))
+	for id, label := range values {
+		result[id] = string(label)
+	}
+	return result, nil
+}
+
+type recommendationCandidates struct{ matches matches.Service }
+
+func (a recommendationCandidates) RecommendationCandidates(ctx context.Context, accountID string, limit int) ([]recommendations.Candidate, error) {
+	values, e := a.matches.RecommendationCandidates(ctx, accountID, limit)
+	if e != nil {
+		return nil, e
+	}
+	result := make([]recommendations.Candidate, len(values))
+	for i, v := range values {
+		result[i] = recommendations.Candidate{ID: v.ID, HostID: v.HostID, Area: v.Area, TimeZone: v.TimeZone, Format: v.Format, Style: v.Style, JoinMode: string(v.JoinMode), StartAt: v.StartAt, EndAt: v.EndAt, MinLevel: v.MinLevel, MaxLevel: v.MaxLevel}
+	}
+	return result, nil
 }
 
 func combineHandlers(handlers ...outbox.Handler) outbox.Handler {

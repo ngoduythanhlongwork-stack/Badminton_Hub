@@ -150,34 +150,40 @@ type Draft struct {
 }
 
 type OwnerProfile struct {
-	AccountID        string
-	Status           OnboardingStatus
-	DisplayName      *string
-	AvatarURL        *string
-	DateOfBirth      *CalendarDate
-	Gender           *Gender
-	Experience       *Experience
-	SkillLevel       *SkillLevel
-	PreferredFormats []GameFormat
-	PlayStyles       []PlayStyle
-	UsualPeriods     []UsualPeriod
-	RegularArea      *string
-	SkillConfidence  SkillConfidence
-	Reliability      ReliabilityLabel
-	MatchCount       int
-	CompletedAt      *time.Time
-	UpdatedAt        time.Time
-	Version          int64
+	AccountID             string
+	Status                OnboardingStatus
+	DisplayName           *string
+	AvatarURL             *string
+	DateOfBirth           *CalendarDate
+	Gender                *Gender
+	Experience            *Experience
+	SkillLevel            *SkillLevel
+	PreferredFormats      []GameFormat
+	PlayStyles            []PlayStyle
+	UsualPeriods          []UsualPeriod
+	RegularArea           *string
+	SkillConfidence       SkillConfidence
+	Reliability           ReliabilityLabel
+	ReliabilityScore      *float64
+	ReliabilitySampleSize int
+	SkillFeedbackCount    int
+	LevelReviewSuggested  bool
+	MatchCount            int
+	CompletedAt           *time.Time
+	UpdatedAt             time.Time
+	Version               int64
 }
 
 // PublicProfile is the D-09 minimal social-proof projection. Preferences,
 // location, DOB, contact data, and internal confidence are deliberately private.
 type PublicProfile struct {
-	AccountID   string
-	DisplayName string
-	SkillLevel  SkillLevel
-	Reliability ReliabilityLabel
-	MatchCount  int
+	AccountID             string
+	DisplayName           string
+	SkillLevel            SkillLevel
+	Reliability           ReliabilityLabel
+	ReliabilityScore      *float64
+	ReliabilitySampleSize int
+	MatchCount            int
 }
 
 // Eligibility is the stable cross-module view used by Identity and Matches.
@@ -190,6 +196,15 @@ type Eligibility struct {
 	SkillConfidence    SkillConfidence
 	Reliability        ReliabilityLabel
 	EligibilityChecked time.Time
+}
+
+type RecommendationProfile struct {
+	AccountID       string
+	SkillLevel      int
+	Formats, Styles []string
+	Periods         []string
+	Area            string
+	Reliability     ReliabilityLabel
 }
 
 type Repository interface {
@@ -282,7 +297,37 @@ func (s *Service) GetPublicProfile(ctx context.Context, accountID string) (Publi
 	if profile.Status != OnboardingComplete {
 		return PublicProfile{}, ErrNotFound
 	}
-	return PublicProfile{AccountID: accountID, DisplayName: *profile.DisplayName, SkillLevel: *profile.SkillLevel, Reliability: profile.Reliability, MatchCount: profile.MatchCount}, nil
+	return PublicProfile{AccountID: accountID, DisplayName: *profile.DisplayName, SkillLevel: *profile.SkillLevel, Reliability: profile.Reliability, ReliabilityScore: profile.ReliabilityScore, ReliabilitySampleSize: profile.ReliabilitySampleSize, MatchCount: profile.MatchCount}, nil
+}
+
+func (s *Service) RecommendationProfile(ctx context.Context, accountID string) (RecommendationProfile, error) {
+	p, err := s.GetOwnerProfile(ctx, accountID)
+	if err != nil {
+		return RecommendationProfile{}, err
+	}
+	if p.Status != OnboardingComplete || p.SkillLevel == nil || p.RegularArea == nil {
+		return RecommendationProfile{}, ErrInvalidProfile
+	}
+	levels := []SkillLevel{SkillBeginner, SkillBeginnerPlus, SkillIntermediate, SkillIntermediatePlus, SkillAdvanced, SkillCompetitive}
+	rank := 0
+	for i, level := range levels {
+		if level == *p.SkillLevel {
+			rank = i + 1
+			break
+		}
+	}
+	return RecommendationProfile{AccountID: accountID, SkillLevel: rank, Formats: toStrings(p.PreferredFormats), Styles: toStrings(p.PlayStyles), Periods: toStrings(p.UsualPeriods), Area: *p.RegularArea, Reliability: p.Reliability}, nil
+}
+
+func (s *Service) HostReliabilities(ctx context.Context, accountIDs []string) (map[string]ReliabilityLabel, error) {
+	type batch interface {
+		Reliabilities(context.Context, []string) (map[string]ReliabilityLabel, error)
+	}
+	repository, ok := s.repository.(batch)
+	if !ok {
+		return nil, errors.New("players repository does not support recommendation projection")
+	}
+	return repository.Reliabilities(ctx, accountIDs)
 }
 
 func IsAdult(dateOfBirth CalendarDate, at time.Time, location *time.Location) bool {

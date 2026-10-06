@@ -75,7 +75,8 @@ See [backend setup and verification](src/backend/README.md). Never commit creden
 
 ## Current status
 
-Business specification 1.0 is PO-approved. Backend R2 is verified through `/api/v1`: the R1
-identity/onboarding/venue/free-join journey plus paid holds, direct-transfer reporting and Host
-acknowledgement, cancellation/refund tracking, in-app/email notification obligations and reminders.
-The next milestone is R3 attendance, review, reliability and deterministic recommendations.
+Business specification 1.0 is PO-approved. Backend R3 is verified through `/api/v1`: the complete
+matchmaking loop now covers identity/onboarding, venue and match discovery, free/paid joining,
+direct-transfer/refund tracking, reminders, attendance, completion, review, correction-aware
+reliability, match-room communication, moderation and deterministic recommendations with measurement.
+The next milestone is pilot hardening, production adapters and web integration; no Phase 2 scope is implied.

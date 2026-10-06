@@ -210,6 +210,22 @@ failed attempts, while the underlying join/payment/cancellation remains committe
 PostgreSQL-backed maintenance loop for hold expiry, 48-hour refund overdue marking and due reminder
 dispatch. Redis is not involved in these correctness decisions.
 
+## ADR-018 — Versioned trust signals and owner-controlled recommendation inputs
+
+Status: **Accepted — 2026-10-06**
+
+Matches owns attendance revisions and reviews. Every effective attendance or skill-feedback outcome
+is published with its source ID and monotonically increasing source revision. Players stores the
+signal history, replaces the previously effective revision and recomputes reliability from at most
+the latest 20 eligible participations. `UNKNOWN` has no reliability value and never becomes an
+implicit no-show. Admin corrections retain the old revision and are safe under event redelivery.
+
+Communication asks Matches for current room access on every read/send; it does not query Matches
+tables. Recommendations receives candidate and profile projections through root-package contracts,
+applies hard filters before the D-23 weighted scorer, persists scoring version/reasons and never
+changes eligibility. Measurement consumes versioned outcomes and keeps a correction-aware current
+projection alongside immutable analytics events. PostgreSQL remains authoritative for all four flows.
+
 ## Open decisions
 
 1. Production email delivery provider (the port and local adapter direction are decided).
