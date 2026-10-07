@@ -109,6 +109,9 @@ func composeR1(pool *pgxpool.Pool, cfg config.Config, logger *slog.Logger) (r1Co
 			if _, err := notificationService.DispatchDue(ctx, 100); err != nil {
 				return fmt.Errorf("dispatch notifications: %w", err)
 			}
+			if err := measurement.ApplyRetention(ctx); err != nil {
+				return fmt.Errorf("apply analytics retention: %w", err)
+			}
 			return nil
 		},
 	}, nil

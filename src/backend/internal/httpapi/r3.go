@@ -2,16 +2,19 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
 
 	"badmintonhub/internal/modules/identity"
 	"badmintonhub/internal/modules/matches"
 	"badmintonhub/internal/modules/moderation"
+	"badmintonhub/internal/modules/recommendations"
 )
 
 func (routes R1Routes) registerR3(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/matches/{matchID}/participants/{participationID}/attendance", routes.auth(http.HandlerFunc(routes.recordAttendance)))
 	mux.Handle("POST /api/v1/matches/{matchID}/reviews", routes.auth(http.HandlerFunc(routes.submitReview)))
 	mux.Handle("POST /api/v1/admin/attendance/{participationID}/corrections", routes.auth(http.HandlerFunc(routes.correctAttendance)))
+	mux.Handle("POST /api/v1/admin/reviews/{reviewID}/corrections", routes.auth(http.HandlerFunc(routes.correctReview)))
 	mux.Handle("GET /api/v1/matches/{matchID}/room/messages", routes.auth(http.HandlerFunc(routes.listRoomMessages)))
 	mux.Handle("POST /api/v1/matches/{matchID}/room/messages", routes.auth(http.HandlerFunc(routes.sendRoomMessage)))
 	mux.Handle("POST /api/v1/moderation/reports", routes.auth(http.HandlerFunc(routes.reportAbuse)))
@@ -19,8 +22,41 @@ func (routes R1Routes) registerR3(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/me/blocks/{accountID}", routes.auth(http.HandlerFunc(routes.unblockAccount)))
 	mux.Handle("POST /api/v1/admin/moderation/cases/{caseID}/assign", routes.auth(http.HandlerFunc(routes.assignCase)))
 	mux.Handle("POST /api/v1/admin/moderation/cases/{caseID}/decide", routes.auth(http.HandlerFunc(routes.decideCase)))
+	mux.Handle("POST /api/v1/moderation/cases/{caseID}/appeal", routes.auth(http.HandlerFunc(routes.appealCase)))
 	mux.Handle("GET /api/v1/recommendations/matches", routes.auth(http.HandlerFunc(routes.recommendMatches)))
 	mux.Handle("GET /api/v1/admin/metrics/attendance", routes.auth(http.HandlerFunc(routes.attendanceMetrics)))
+	mux.Handle("GET /api/v1/admin/metrics/funnel", routes.auth(http.HandlerFunc(routes.funnelMetrics)))
+	mux.Handle("POST /api/v1/analytics/events", routes.auth(http.HandlerFunc(routes.recordAnalyticsEvent)))
+	mux.Handle("GET /api/v1/me/activity", routes.auth(http.HandlerFunc(routes.myActivity)))
+	mux.Handle("GET /api/v1/matches/{matchID}/participants", routes.auth(http.HandlerFunc(routes.listMatchParticipants)))
+}
+
+func (routes R1Routes) myActivity(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFromContext(r.Context())
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		value, e := strconv.Atoi(raw)
+		if e != nil || value < 1 || value > 100 {
+			WriteError(w, r, http.StatusBadRequest, "validation_failed", "Giới hạn phải từ 1 đến 100.")
+			return
+		}
+		limit = value
+	}
+	items, e := routes.Matches.Activity(r.Context(), p.AccountID, r.URL.Query().Get("view"), limit)
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	writeJSON(w, map[string]any{"items": items})
+}
+func (routes R1Routes) listMatchParticipants(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFromContext(r.Context())
+	items, e := routes.Matches.Participants(r.Context(), p.AccountID, r.PathValue("matchID"))
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	writeJSON(w, map[string]any{"items": items})
 }
 
 func (routes R1Routes) listRoomMessages(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +149,21 @@ func (routes R1Routes) decideCase(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, c)
 }
+func (routes R1Routes) appealCase(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if !DecodeJSON(w, r, &body) {
+		return
+	}
+	p, _ := PrincipalFromContext(r.Context())
+	c, e := routes.Moderation.Appeal(r.Context(), r.PathValue("caseID"), p.AccountID, body.Reason)
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	writeJSON(w, c)
+}
 func (routes R1Routes) requireAdmin(w http.ResponseWriter, r *http.Request, accountID string) bool {
 	ok, e := routes.Identity.HasPermission(r.Context(), identity.PermissionQuery{AccountID: accountID, Permission: identity.PermissionAccountManage, ScopeType: "GLOBAL"})
 	if e != nil {
@@ -145,6 +196,36 @@ func (routes R1Routes) attendanceMetrics(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, map[string]any{"metricVersion": "D24-V1", "attendance": result})
+}
+func (routes R1Routes) funnelMetrics(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFromContext(r.Context())
+	if !routes.requireAdmin(w, r, p.AccountID) {
+		return
+	}
+	result, e := routes.Measurement.Funnel(r.Context())
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	writeJSON(w, map[string]any{"metricVersion": "D24-V1", "funnel": result})
+}
+func (routes R1Routes) recordAnalyticsEvent(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ClientEventID string `json:"clientEventId"`
+		EventType     string `json:"eventType"`
+		MatchID       string `json:"matchId"`
+		SearchSession string `json:"searchSessionId"`
+	}
+	if !DecodeJSON(w, r, &body) {
+		return
+	}
+	p, _ := PrincipalFromContext(r.Context())
+	e := routes.Measurement.RecordInteraction(r.Context(), recommendations.InteractionEvent{ClientEventID: body.ClientEventID, EventType: body.EventType, ActorID: p.AccountID, MatchID: body.MatchID, SearchSession: body.SearchSession})
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (routes R1Routes) recordAttendance(w http.ResponseWriter, r *http.Request) {
@@ -232,4 +313,42 @@ func (routes R1Routes) correctAttendance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, participationResponse(part))
+}
+
+func (routes R1Routes) correctReview(w http.ResponseWriter, r *http.Request) {
+	key, ok := idempotencyKey(r)
+	if !ok {
+		WriteError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Thiếu Idempotency-Key.")
+		return
+	}
+	p, _ := PrincipalFromContext(r.Context())
+	if !routes.requireAdmin(w, r, p.AccountID) {
+		return
+	}
+	var body struct {
+		CaseID        string   `json:"caseId"`
+		MatchQuality  int      `json:"matchQuality"`
+		HostRating    int      `json:"hostRating"`
+		Tags          []string `json:"tags"`
+		SkillFeedback string   `json:"skillFeedback"`
+		Reason        string   `json:"reason"`
+	}
+	if !DecodeJSON(w, r, &body) {
+		return
+	}
+	reviewID := r.PathValue("reviewID")
+	if e := routes.Moderation.AuthorizeOwnerAction(r.Context(), body.CaseID, p.AccountID, "REVIEW", reviewID); e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	review, e := routes.Matches.CorrectReview(r.Context(), p.AccountID, reviewID, body.CaseID, key, body.MatchQuality, body.HostRating, body.Tags, body.SkillFeedback, body.Reason)
+	if e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	if e = routes.Moderation.ResolveOwnerAction(r.Context(), body.CaseID, p.AccountID, "review corrected"); e != nil {
+		routes.writeDomainError(w, r, e)
+		return
+	}
+	writeJSON(w, review)
 }

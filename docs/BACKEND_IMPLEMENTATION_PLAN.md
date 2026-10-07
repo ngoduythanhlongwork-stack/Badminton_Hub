@@ -8,6 +8,14 @@ Execution status: **Slices 0–8 verified; R3 CLOSED — 2026-10-06**. The close
 onboarding through play, review, correction-aware trust, deterministic recommendation and measurement
 passes format, vet, unit, build, live PostgreSQL/Redis integration and HTTP E2E verification.
 
+Post-R3 hardening update — 2026-10-07: My Activity, Host participant list, review correction history,
+moderation appeal/reopen, interaction funnel metrics and analytics retention are implemented and covered
+by the R3 HTTP E2E. Forward migrations 14–15 are additive; deploy them before the new API binary. The
+D-24 local-Docker load gate passes with 500 accounts, 10,000 historical matches, 1,000 active candidates
+and 50 concurrent recommendation requests after concurrent warm-up: latest verification measured candidate
+query p95 **100.4ms** and end-to-end recommendation p95 **137.5ms**, below the 1s target. Production-equivalent staging must still
+repeat the measurement before the pilot readiness claim.
+
 ## 1. Mục tiêu và nguyên tắc thực thi
 
 Xây backend Go modular monolith theo hành trình:
@@ -38,7 +46,8 @@ Backend hiện có:
 - PostgreSQL-guarded free join, schedule/capacity/idempotency và E2E onboard → publish → join.
 
 Môi trường R0 đã được xác nhận với Go 1.26.8, Docker Engine 25.0.3, PostgreSQL 17 và Redis 7.4.
-PostgreSQL Compose dùng host port `55432` để không xung đột PostgreSQL host trên `5432`.
+PostgreSQL Compose dùng host port `54320` để tránh PostgreSQL host trên `5432` và các dải cổng động
+Windows/Hyper-V có thể reserve.
 
 ## 3. Technical decision gate — Iteration 0
 
@@ -277,6 +286,8 @@ Definition of Done cho mỗi slice:
 
 ## 9. Trạng thái bàn giao sau R3
 
-Slices 0–8 đã được implement và R3 đã đóng. Bước tiếp theo là pilot hardening: nối production email,
-chọn object storage/map provider, quan sát hiệu năng trên đúng dataset D-24 và tích hợp web theo API hiện có.
+Slices 0–8 đã được implement và R3 đã đóng. Pilot hardening chức năng đã bổ sung activity/participant,
+review correction, moderation appeal, funnel và retention. Performance gate D-24 đã xanh trên local Docker
+sau khi loại bỏ việc đọc timezone database cho từng candidate; cần chạy lại trên staging tương đương production,
+sau đó nối production email và chọn object storage/map provider.
 Không đưa Phase 2 vào backend nếu PRD chưa được PO sửa có chủ đích.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"badmintonhub/internal/platform/id"
+	"badmintonhub/internal/platform/metrics"
 )
 
 const (
@@ -95,12 +96,31 @@ func accessLog(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-func middleware(logger *slog.Logger, maxBodyBytes int64, next http.Handler) http.Handler {
+func measureHTTP(metric *metrics.HTTP, next http.Handler) http.Handler {
+	if metric == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		recorder := &responseRecorder{ResponseWriter: w}
+		finish := metric.Begin()
+		defer func() {
+			status := recorder.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			finish(status, time.Since(started))
+		}()
+		next.ServeHTTP(recorder, r)
+	})
+}
+
+func middleware(logger *slog.Logger, maxBodyBytes int64, metric *metrics.HTTP, next http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = DefaultMaxBodySize
 	}
-	return requestID(accessLog(logger, recoverPanics(logger, boundedBody(maxBodyBytes, next))))
+	return requestID(measureHTTP(metric, accessLog(logger, recoverPanics(logger, boundedBody(maxBodyBytes, next)))))
 }

@@ -106,16 +106,18 @@ type Participation struct {
 }
 
 type Review struct {
-	ID             string    `json:"id"`
-	MatchID        string    `json:"matchId"`
-	ReviewerID     string    `json:"reviewerId"`
-	TargetPlayerID string    `json:"targetPlayerId"`
-	MatchQuality   int       `json:"matchQuality"`
-	HostRating     int       `json:"hostRating"`
-	Revision       int       `json:"revision"`
-	Tags           []string  `json:"tags"`
-	SkillFeedback  string    `json:"skillFeedback"`
-	SubmittedAt    time.Time `json:"submittedAt"`
+	ID             string     `json:"id"`
+	MatchID        string     `json:"matchId"`
+	ReviewerID     string     `json:"reviewerId"`
+	TargetPlayerID string     `json:"targetPlayerId"`
+	MatchQuality   int        `json:"matchQuality"`
+	HostRating     int        `json:"hostRating"`
+	Revision       int        `json:"revision"`
+	Tags           []string   `json:"tags"`
+	SkillFeedback  string     `json:"skillFeedback"`
+	SubmittedAt    time.Time  `json:"submittedAt"`
+	CorrectedAt    *time.Time `json:"correctedAt,omitempty"`
+	CorrectedBy    string     `json:"correctedBy,omitempty"`
 }
 
 type TrustSignalEvent struct {
@@ -202,6 +204,7 @@ type R3Repository interface {
 	RecordAttendance(context.Context, string, string, string, ParticipationStatus, string, time.Time) (Participation, error)
 	CompleteDueMatches(context.Context, time.Time, int) (int, error)
 	SubmitReview(context.Context, Review, string, time.Time) (Review, error)
+	CorrectReview(context.Context, string, string, string, string, Review, string, time.Time) (Review, error)
 	CorrectAttendance(context.Context, string, string, string, string, ParticipationStatus, string, time.Time) (Participation, error)
 	RoomAccess(context.Context, string, string, time.Time) (RoomAccess, error)
 	RecommendationCandidates(context.Context, string, time.Time, int) ([]RecommendationCandidate, error)
@@ -217,6 +220,40 @@ type RecommendationCandidate struct {
 	StartAt, EndAt                            time.Time
 	MinLevel, MaxLevel                        int
 	JoinMode                                  JoinMode
+}
+
+type ActivityItem struct {
+	MatchID            string              `json:"matchId"`
+	Title              string              `json:"title"`
+	VenueName          string              `json:"venueName"`
+	Area               string              `json:"area"`
+	TimeZone           string              `json:"timeZone"`
+	Format             string              `json:"format"`
+	Style              string              `json:"style"`
+	StartAt            time.Time           `json:"startAt"`
+	EndAt              time.Time           `json:"endAt"`
+	MatchStatus        Status              `json:"matchStatus"`
+	Role               string              `json:"role"`
+	ParticipationID    string              `json:"participationId,omitempty"`
+	ParticipationState ParticipationStatus `json:"participationStatus,omitempty"`
+}
+
+type ParticipantSummary struct {
+	ID                 string              `json:"id"`
+	MatchID            string              `json:"matchId"`
+	PlayerID           string              `json:"playerId"`
+	Status             ParticipationStatus `json:"status"`
+	DecisionReason     string              `json:"decisionReason,omitempty"`
+	HoldStatus         HoldStatus          `json:"holdStatus,omitempty"`
+	HoldExpiresAt      *time.Time          `json:"holdExpiresAt,omitempty"`
+	AttendanceRevision int                 `json:"attendanceRevision"`
+	CreatedAt          time.Time           `json:"createdAt"`
+	UpdatedAt          time.Time           `json:"updatedAt"`
+}
+
+type ActivityRepository interface {
+	ListActivity(context.Context, string, string, time.Time, int) ([]ActivityItem, error)
+	ListParticipants(context.Context, string, string) ([]ParticipantSummary, error)
 }
 
 type Service struct {
@@ -461,19 +498,38 @@ func (s Service) CompleteDueMatches(ctx context.Context, limit int) (int, error)
 }
 
 func (s Service) SubmitReview(ctx context.Context, reviewer, matchID, targetPlayerID, key string, quality, hostRating int, tags []string, feedback string) (Review, error) {
-	if key == "" || reviewer == targetPlayerID || quality < 1 || quality > 5 || hostRating < 1 || hostRating > 5 || !allowed(feedback, "AS_EXPECTED", "STRONGER_THAN_PROFILE", "LOWER_THAN_PROFILE") {
+	if key == "" || reviewer == targetPlayerID || !validReview(quality, hostRating, tags, feedback) {
 		return Review{}, ErrInvalid
-	}
-	for _, tag := range tags {
-		if !allowed(tag, "FRIENDLY", "FAIR", "COMPETITIVE", "ON_TIME", "GOOD_SKILL_MATCH") {
-			return Review{}, ErrInvalid
-		}
 	}
 	repo, ok := s.repo.(R3Repository)
 	if !ok {
 		return Review{}, ErrInvalid
 	}
 	return repo.SubmitReview(ctx, Review{MatchID: matchID, ReviewerID: reviewer, TargetPlayerID: targetPlayerID, MatchQuality: quality, HostRating: hostRating, Tags: tags, SkillFeedback: feedback}, key, s.now().UTC())
+}
+
+func (s Service) CorrectReview(ctx context.Context, admin, reviewID, caseID, key string, quality, hostRating int, tags []string, feedback, reason string) (Review, error) {
+	reason = strings.TrimSpace(reason)
+	if admin == "" || reviewID == "" || caseID == "" || key == "" || reason == "" || !validReview(quality, hostRating, tags, feedback) {
+		return Review{}, ErrInvalid
+	}
+	repo, ok := s.repo.(R3Repository)
+	if !ok {
+		return Review{}, ErrInvalid
+	}
+	return repo.CorrectReview(ctx, admin, reviewID, caseID, key, Review{MatchQuality: quality, HostRating: hostRating, Tags: tags, SkillFeedback: feedback}, reason, s.now().UTC())
+}
+
+func validReview(quality, hostRating int, tags []string, feedback string) bool {
+	if quality < 1 || quality > 5 || hostRating < 1 || hostRating > 5 || !allowed(feedback, "AS_EXPECTED", "STRONGER_THAN_PROFILE", "LOWER_THAN_PROFILE") {
+		return false
+	}
+	for _, tag := range tags {
+		if !allowed(tag, "FRIENDLY", "FAIR", "COMPETITIVE", "ON_TIME", "GOOD_SKILL_MATCH") {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Service) CorrectAttendance(ctx context.Context, admin, participationID, caseID, key string, status ParticipationStatus, reason string) (Participation, error) {
@@ -504,6 +560,28 @@ func (s Service) RecommendationCandidates(ctx context.Context, accountID string,
 		limit = 1000
 	}
 	return repo.RecommendationCandidates(ctx, accountID, s.now().UTC(), limit)
+}
+
+func (s Service) Activity(ctx context.Context, accountID, view string, limit int) ([]ActivityItem, error) {
+	if view != "upcoming" && view != "history" && view != "hosted" {
+		return nil, ErrInvalid
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	repo, ok := s.repo.(ActivityRepository)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	return repo.ListActivity(ctx, accountID, view, s.now().UTC(), limit)
+}
+
+func (s Service) Participants(ctx context.Context, hostID, matchID string) ([]ParticipantSummary, error) {
+	repo, ok := s.repo.(ActivityRepository)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	return repo.ListParticipants(ctx, hostID, matchID)
 }
 
 func (s Service) fromDraft(ctx context.Context, host string, d Draft) (Match, error) {

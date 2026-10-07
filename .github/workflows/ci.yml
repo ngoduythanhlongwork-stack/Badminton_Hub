@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: badminton_hub
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d badminton_hub"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: src/backend
+    env:
+      APP_ENV: test
+      PUBLIC_BASE_URL: http://localhost:5080
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/badminton_hub?sslmode=disable
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+      IDENTITY_TOKEN_SECRET: ci_identity_token_secret_at_least_32_bytes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/backend/go.mod
+          cache-dependency-path: src/backend/go.sum
+      - run: test -z "$(gofmt -l ./cmd ./internal)"
+      - run: go vet ./...
+      - run: go test ./...
+      - run: go test -tags=integration ./... -count=1
+      - run: go build ./...
+      - run: docker build -t badminton-hub-api:ci .
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build

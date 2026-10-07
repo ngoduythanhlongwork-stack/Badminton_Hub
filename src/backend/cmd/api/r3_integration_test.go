@@ -67,6 +67,19 @@ func TestR3ClosedLoopJourneyOverHTTP(t *testing.T) {
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/publish", host.AccessToken, "", nil, http.StatusOK)
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/join", player.AccessToken, "r3-join-player", nil, http.StatusCreated)
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/join", unknown.AccessToken, "r3-join-unknown", nil, http.StatusCreated)
+	participants := requestJSON(t, http.MethodGet, server.URL+"/api/v1/matches/"+matchID+"/participants", host.AccessToken, "", nil, http.StatusOK)
+	if items, ok := participants["items"].([]any); !ok || len(items) != 3 {
+		t.Fatalf("participants=%v", participants)
+	}
+	requestJSON(t, http.MethodGet, server.URL+"/api/v1/matches/"+matchID+"/participants", player.AccessToken, "", nil, http.StatusForbidden)
+	upcoming := requestJSON(t, http.MethodGet, server.URL+"/api/v1/me/activity?view=upcoming", player.AccessToken, "", nil, http.StatusOK)
+	if items, ok := upcoming["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("upcoming=%v", upcoming)
+	}
+	hosted := requestJSON(t, http.MethodGet, server.URL+"/api/v1/me/activity?view=hosted", host.AccessToken, "", nil, http.StatusOK)
+	if items, ok := hosted["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("hosted=%v", hosted)
+	}
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/room/messages", player.AccessToken, "r3-message", map[string]any{"body": "Hen moi nguoi tai san."}, http.StatusCreated)
 
 	now := time.Now().UTC()
@@ -102,7 +115,12 @@ func TestR3ClosedLoopJourneyOverHTTP(t *testing.T) {
 	if count, completeErr := composition.routes.Matches.CompleteDueMatches(ctx, 100); completeErr != nil || count != 1 {
 		t.Fatalf("complete count=%d err=%v", count, completeErr)
 	}
-	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/reviews", player.AccessToken, "r3-review", map[string]any{"targetPlayerId": host.AccountID, "matchQuality": 5, "hostRating": 5, "tags": []string{"FRIENDLY", "ON_TIME"}, "skillFeedback": "AS_EXPECTED"}, http.StatusCreated)
+	history := requestJSON(t, http.MethodGet, server.URL+"/api/v1/me/activity?view=history", player.AccessToken, "", nil, http.StatusOK)
+	if items, ok := history["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("history=%v", history)
+	}
+	review := requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/reviews", player.AccessToken, "r3-review", map[string]any{"targetPlayerId": host.AccountID, "matchQuality": 5, "hostRating": 5, "tags": []string{"FRIENDLY", "ON_TIME"}, "skillFeedback": "AS_EXPECTED"}, http.StatusCreated)
+	reviewID := stringField(t, review, "id")
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/reviews", unknown.AccessToken, "r3-review-denied", map[string]any{"targetPlayerId": host.AccountID, "matchQuality": 5, "hostRating": 5, "tags": []string{"FRIENDLY"}, "skillFeedback": "AS_EXPECTED"}, http.StatusForbidden)
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/matches/"+matchID+"/room/messages", unknown.AccessToken, "r3-stale-message", map[string]any{"body": "stale"}, http.StatusForbidden)
 
@@ -112,6 +130,17 @@ func TestR3ClosedLoopJourneyOverHTTP(t *testing.T) {
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/moderation/cases/"+caseID+"/decide", admin.AccessToken, "", map[string]any{"decision": "Correct attendance from evidence", "resolved": false}, http.StatusOK)
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/attendance/"+unknownParticipation+"/corrections", admin.AccessToken, "r3-correction", map[string]any{"caseId": caseID, "status": "CHECKED_IN", "reason": "Evidence confirmed attendance"}, http.StatusOK)
 	requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/attendance/"+unknownParticipation+"/corrections", admin.AccessToken, "r3-correction", map[string]any{"caseId": caseID, "status": "CHECKED_IN", "reason": "Evidence confirmed attendance"}, http.StatusForbidden)
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/moderation/cases/"+caseID+"/appeal", unknown.AccessToken, "", map[string]any{"reason": "Please review the evidence again"}, http.StatusOK)
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/moderation/cases/"+caseID+"/appeal", unknown.AccessToken, "", map[string]any{"reason": "Duplicate appeal"}, http.StatusConflict)
+
+	reviewReport := requestJSON(t, http.MethodPost, server.URL+"/api/v1/moderation/reports", host.AccessToken, "", map[string]any{"subjectType": "REVIEW", "subjectId": reviewID, "targetActorId": player.AccountID, "reason": "FAKE_SKILL", "description": "Skill feedback needs correction"}, http.StatusCreated)
+	reviewCaseID := stringField(t, reviewReport, "id")
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/moderation/cases/"+reviewCaseID+"/assign", admin.AccessToken, "", nil, http.StatusOK)
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/moderation/cases/"+reviewCaseID+"/decide", admin.AccessToken, "", map[string]any{"decision": "Correction supported by evidence", "resolved": false}, http.StatusOK)
+	correctedReview := requestJSON(t, http.MethodPost, server.URL+"/api/v1/admin/reviews/"+reviewID+"/corrections", admin.AccessToken, "r3-review-correction", map[string]any{"caseId": reviewCaseID, "matchQuality": 4, "hostRating": 4, "tags": []string{"FAIR", "ON_TIME"}, "skillFeedback": "LOWER_THAN_PROFILE", "reason": "Evidence supports the corrected assessment"}, http.StatusOK)
+	if correctedReview["revision"] != float64(2) || correctedReview["skillFeedback"] != "LOWER_THAN_PROFILE" {
+		t.Fatalf("corrected review=%v", correctedReview)
+	}
 
 	future := time.Now().UTC().Add(72 * time.Hour)
 	matchBody["title"] = "Keo goi y"
@@ -124,6 +153,17 @@ func TestR3ClosedLoopJourneyOverHTTP(t *testing.T) {
 	items, ok := recommended["items"].([]any)
 	if !ok || len(items) == 0 {
 		t.Fatalf("recommendations=%v", recommended)
+	}
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/analytics/events", player.AccessToken, "", map[string]any{"clientEventId": "r3-search-1", "eventType": "SearchSubmitted", "searchSessionId": "r3-session-1"}, http.StatusNoContent)
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/analytics/events", player.AccessToken, "", map[string]any{"clientEventId": "r3-detail-1", "eventType": "MatchDetailViewed", "matchId": secondID, "searchSessionId": "r3-session-1"}, http.StatusNoContent)
+	requestJSON(t, http.MethodPost, server.URL+"/api/v1/analytics/events", player.AccessToken, "", map[string]any{"clientEventId": "r3-detail-1", "eventType": "MatchDetailViewed", "matchId": secondID, "searchSessionId": "r3-session-1"}, http.StatusNoContent)
+	if _, err = composition.routes.Measurement.Funnel(ctx); err != nil {
+		t.Fatalf("calculate funnel: %v", err)
+	}
+	funnel := requestJSON(t, http.MethodGet, server.URL+"/api/v1/admin/metrics/funnel", admin.AccessToken, "", nil, http.StatusOK)
+	funnelBody, ok := funnel["funnel"].(map[string]any)
+	if !ok || funnelBody["searchSessions"] != float64(1) || funnelBody["searchToDetail"] != float64(1) {
+		t.Fatalf("funnel=%v", funnel)
 	}
 	requestJSON(t, http.MethodPut, server.URL+"/api/v1/me/blocks/"+host.AccountID, player.AccessToken, "", nil, http.StatusNoContent)
 	recommended = requestJSON(t, http.MethodGet, server.URL+"/api/v1/recommendations/matches", player.AccessToken, "", nil, http.StatusOK)

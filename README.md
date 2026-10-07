@@ -46,7 +46,7 @@ infra/            local infrastructure
 ```powershell
 docker compose -f infra/compose.yaml up -d
 cd src/backend
-$env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:55432/badminton_hub?sslmode=disable"
+$env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:54320/badminton_hub?sslmode=disable"
 $env:REDIS_URL="redis://localhost:6379/0"
 $env:IDENTITY_TOKEN_SECRET="local_only_change_me_identity_token_secret_32_bytes"
 go run ./cmd/api
@@ -64,7 +64,7 @@ Default local URLs:
 
 - Web: `http://localhost:3000`
 - API health: `http://localhost:5080/health`
-- PostgreSQL: `localhost:55432` (container port `5432`)
+- PostgreSQL: `localhost:54320` (container port `5432`)
 - Redis: `localhost:6379`
 
 The Go API reads process environment variables, not `.env` files automatically.
@@ -80,3 +80,7 @@ matchmaking loop now covers identity/onboarding, venue and match discovery, free
 direct-transfer/refund tracking, reminders, attendance, completion, review, correction-aware
 reliability, match-room communication, moderation and deterministic recommendations with measurement.
 The next milestone is pilot hardening, production adapters and web integration; no Phase 2 scope is implied.
+
+Operational release, monitoring, backup/restore, provider handoff and staging performance procedures are in
+[`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md). The API exposes Prometheus-format operational
+metrics at `GET /metrics`; keep this endpoint private outside local development.

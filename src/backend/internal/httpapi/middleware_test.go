@@ -58,7 +58,7 @@ func TestStableRoutingErrors(t *testing.T) {
 }
 
 func TestBoundedJSONBody(t *testing.T) {
-	handler := middleware(slog.New(slog.NewTextHandler(io.Discard, nil)), 8, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := middleware(slog.New(slog.NewTextHandler(io.Discard, nil)), 8, nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]string
 		if DecodeJSON(w, r, &body) {
 			writeJSON(w, body)
@@ -78,7 +78,7 @@ func TestBoundedJSONBody(t *testing.T) {
 func TestPanicRecoveryAndAccessLog(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
-	handler := middleware(logger, DefaultMaxBodySize, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("secret") }))
+	handler := middleware(logger, DefaultMaxBodySize, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("secret") }))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/panic", nil))
 	var body ErrorBody

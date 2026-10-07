@@ -20,7 +20,7 @@ func TestR1MigrationManifestIsOrderedAndComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest) != 13 {
+	if len(manifest) != 15 {
 		t.Fatalf("migration count=%d", len(manifest))
 	}
 	for index, migration := range manifest {

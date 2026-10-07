@@ -72,7 +72,7 @@ func (s *Service) Report(ctx context.Context, c Case) (Case, error) {
 	c.SubjectType = strings.ToUpper(strings.TrimSpace(c.SubjectType))
 	c.Reason = strings.ToUpper(strings.TrimSpace(c.Reason))
 	c.Description = strings.TrimSpace(c.Description)
-	if c.ReporterID == "" || c.SubjectID == "" || c.Description == "" || !oneOf(c.SubjectType, "USER", "MATCH", "MESSAGE", "PAYMENT", "ATTENDANCE") || !oneOf(c.Reason, "SPAM", "FRAUD", "HARASSMENT", "FAKE_SKILL", "NO_SHOW", "OTHER") {
+	if c.ReporterID == "" || c.SubjectID == "" || c.Description == "" || !oneOf(c.SubjectType, "USER", "MATCH", "MESSAGE", "PAYMENT", "ATTENDANCE", "REVIEW") || !oneOf(c.Reason, "SPAM", "FRAUD", "HARASSMENT", "FAKE_SKILL", "NO_SHOW", "OTHER") {
 		return Case{}, ErrInvalid
 	}
 	c.ID, _ = id.New()
@@ -182,6 +182,61 @@ func (s *Service) Decide(ctx context.Context, caseID, admin, decision string, re
 	}
 	e = tx.Commit(ctx)
 	return c, e
+}
+
+func (s *Service) Appeal(ctx context.Context, caseID, actor, reason string) (Case, error) {
+	reason = strings.TrimSpace(reason)
+	if caseID == "" || actor == "" || reason == "" {
+		return Case{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Case{}, err
+	}
+	defer tx.Rollback(context.Background())
+	c, err := caseByID(ctx, tx, caseID, true)
+	if err != nil {
+		return Case{}, err
+	}
+	now := s.clock.Now().UTC()
+	if actor != c.ReporterID && actor != c.TargetActorID {
+		return Case{}, ErrForbidden
+	}
+	var appealed bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM moderation.case_appeals WHERE case_id=$1)`, caseID).Scan(&appealed); err != nil {
+		return Case{}, err
+	}
+	if appealed {
+		return Case{}, ErrConflict
+	}
+	if c.Status != "DECIDED" && c.Status != "RESOLVED" {
+		return Case{}, ErrForbidden
+	}
+	if now.After(c.UpdatedAt.Add(7 * 24 * time.Hour)) {
+		return Case{}, ErrConflict
+	}
+	appealID, _ := id.New()
+	if _, err = tx.Exec(ctx, `INSERT INTO moderation.case_appeals(id,case_id,appellant_id,reason,created_at) VALUES($1,$2,$3,$4,$5)`, appealID, caseID, actor, reason, now); err != nil {
+		var pgErr interface{ SQLState() string }
+		if errors.As(err, &pgErr) && pgErr.SQLState() == "23505" {
+			return Case{}, ErrConflict
+		}
+		return Case{}, err
+	}
+	before := c.Status
+	c.Status = "REOPENED"
+	c.UpdatedAt = now
+	if _, err = tx.Exec(ctx, `UPDATE moderation.cases SET status='REOPENED',assignee_id=NULL,resolved_at=NULL,updated_at=$2 WHERE id=$1`, caseID, now); err != nil {
+		return Case{}, err
+	}
+	if err = audit(ctx, tx, c, actor, "APPEAL", before, c.Status, reason); err != nil {
+		return Case{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Case{}, err
+	}
+	c.AssigneeID = ""
+	return c, nil
 }
 
 type rowQuerier interface {

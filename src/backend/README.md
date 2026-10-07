@@ -10,7 +10,7 @@ From repository root, start the dedicated local infrastructure:
 ```powershell
 docker compose -f infra/compose.yaml up -d --wait
 cd src/backend
-$env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:55432/badminton_hub?sslmode=disable"
+$env:DATABASE_URL="postgres://badminton_hub:local_only_change_me@localhost:54320/badminton_hub?sslmode=disable"
 $env:REDIS_URL="redis://localhost:6379/0"
 $env:IDENTITY_TOKEN_SECRET="local_only_change_me_identity_token_secret_32_bytes"
 go run ./cmd/api
@@ -85,8 +85,12 @@ liveness independence and invalid configuration.
 Business routes live under `/api/v1`: authentication and recovery, owner onboarding,
 public player projection, organizer review, venue management/discovery, match draft/publish/search,
 free/paid instant or approval join, payment ledger, cancellation/refund, notification inbox,
-attendance/review, match room, moderation, recommendation and attendance measurement.
+attendance/review, My Activity, Host participant list, match room, moderation, recommendation and measurement.
 Commands that may duplicate effects require `Idempotency-Key`.
+
+Post-R3 hardening adds Admin review correction backed by a decided Moderation case, one appeal within
+seven days by the reporter/target, correction-aware trust revisions, whitelisted interaction events,
+funnel reporting and retention cleanup. Apply migrations 14–15 before deploying these routes.
 
 Paid matches keep participation, hold and money states independent. A Player transfer report does
 not confirm receipt or joining. Hosts acknowledge actual receipts; Matches then rechecks the live
@@ -97,6 +101,11 @@ The API maintenance loop expires holds, completes matches after `end+24h`, marks
 attendance as `UNKNOWN`, marks 48-hour refunds overdue and dispatches due 24h/2h reminders.
 PostgreSQL remains authoritative when Redis is unavailable. Local development uses an
 in-memory capture adapter for notification email; select and verify a production provider before pilot.
+
+Operational telemetry is available at `GET /metrics` in Prometheus text format. It intentionally omits route,
+account and payload labels. Production configuration rejects disabled PostgreSQL TLS, an HTTP public origin and
+known development secret placeholders. See `docs/OPERATIONS_RUNBOOK.md` for release, backup/restore, alert and
+staging benchmark procedures.
 
 Verification/reset delivery uses the PostgreSQL outbox. The database stores only token hashes and
 non-secret delivery metadata; the worker derives the bearer from `IDENTITY_TOKEN_SECRET` only while

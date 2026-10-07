@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"badmintonhub/internal/platform/metrics"
 )
 
 func TestRoutes(t *testing.T) {
@@ -38,6 +41,17 @@ func TestRoutes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMetricsEndpointUsesSharedInstrumentation(t *testing.T) {
+	operational := &metrics.HTTP{}
+	handler := NewHandlerWithOptions(Options{Metrics: operational})
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/health", nil))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "badminton_http_requests_total 1") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

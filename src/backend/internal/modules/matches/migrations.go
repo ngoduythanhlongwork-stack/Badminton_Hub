@@ -17,6 +17,7 @@ func Migrations() []migrations.Migration {
 		{5, "matches_and_participation", "migrations/0005_matches.sql"},
 		{6, "paid_holds_and_cancellation", "migrations/0006_paid_holds_and_cancellation.sql"},
 		{9, "attendance_reviews", "migrations/0009_attendance_reviews.sql"},
+		{14, "review_corrections", "migrations/0014_review_corrections.sql"},
 	}
 	result := make([]migrations.Migration, 0, len(files))
 	for _, item := range files {

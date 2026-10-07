@@ -183,6 +183,75 @@ func (r *PostgresRepository) SubmitReview(ctx context.Context, review Review, ke
 	return review, nil
 }
 
+func (r *PostgresRepository) CorrectReview(ctx context.Context, admin, reviewID, caseID, key string, replacement Review, reason string, now time.Time) (Review, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Review{}, err
+	}
+	defer tx.Rollback(context.Background())
+
+	var current Review
+	var completedAt time.Time
+	err = tx.QueryRow(ctx, `SELECT r.id,r.match_id,r.reviewer_id,r.target_player_id,r.match_quality,r.host_rating,r.tags,r.skill_feedback,r.revision,r.submitted_at,m.completed_at
+FROM matches.reviews r JOIN matches.matches m ON m.id=r.match_id WHERE r.id=$1 FOR UPDATE OF r,m`, reviewID).Scan(&current.ID, &current.MatchID, &current.ReviewerID, &current.TargetPlayerID, &current.MatchQuality, &current.HostRating, &current.Tags, &current.SkillFeedback, &current.Revision, &current.SubmittedAt, &completedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Review{}, ErrNotFound
+	}
+	if err != nil {
+		return Review{}, err
+	}
+	if now.After(completedAt.Add(30 * 24 * time.Hour)) {
+		return Review{}, ErrReviewWindow
+	}
+	fingerprint := fmt.Sprintf("%s:%s:%d:%d:%v:%s:%s", reviewID, caseID, replacement.MatchQuality, replacement.HostRating, replacement.Tags, replacement.SkillFeedback, reason)
+	var storedFingerprint, storedID string
+	err = tx.QueryRow(ctx, `SELECT fingerprint,resource_id::text FROM matches.command_results WHERE actor_id=$1 AND action='review-correction' AND idempotency_key=$2`, admin, key).Scan(&storedFingerprint, &storedID)
+	if err == nil {
+		if storedFingerprint != fingerprint {
+			return Review{}, ErrIdempotencyConflict
+		}
+		result, readErr := r.reviewByID(ctx, tx, storedID)
+		if readErr != nil {
+			return Review{}, readErr
+		}
+		return result, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Review{}, err
+	}
+
+	revisionID, _ := id.New()
+	replacement.ID = current.ID
+	replacement.MatchID = current.MatchID
+	replacement.ReviewerID = current.ReviewerID
+	replacement.TargetPlayerID = current.TargetPlayerID
+	replacement.Revision = current.Revision + 1
+	replacement.SubmittedAt = current.SubmittedAt
+	replacement.CorrectedAt = &now
+	replacement.CorrectedBy = admin
+	_, err = tx.Exec(ctx, `INSERT INTO matches.review_revisions(id,review_id,match_id,revision,previous_match_quality,previous_host_rating,previous_tags,previous_skill_feedback,new_match_quality,new_host_rating,new_tags,new_skill_feedback,actor_id,case_id,reason,occurred_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, revisionID, reviewID, current.MatchID, replacement.Revision, current.MatchQuality, current.HostRating, current.Tags, current.SkillFeedback, replacement.MatchQuality, replacement.HostRating, replacement.Tags, replacement.SkillFeedback, admin, caseID, reason, now)
+	if err != nil {
+		return Review{}, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE matches.reviews SET match_quality=$2,host_rating=$3,tags=$4,skill_feedback=$5,revision=$6,corrected_at=$7,corrected_by=$8 WHERE id=$1`, reviewID, replacement.MatchQuality, replacement.HostRating, replacement.Tags, replacement.SkillFeedback, replacement.Revision, now, admin)
+	if err != nil {
+		return Review{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO matches.command_results(actor_id,action,idempotency_key,fingerprint,resource_type,resource_id,created_at) VALUES($1,'review-correction',$2,$3,'review',$4,$5)`, admin, key, fingerprint, reviewID, now); err != nil {
+		return Review{}, mapR3Idempotency(err)
+	}
+	eventID, _ := id.New()
+	event := TrustSignalEvent{EventID: eventID, AccountID: current.TargetPlayerID, SourceType: "SKILL_FEEDBACK", SourceID: reviewID, SourceRevision: replacement.Revision, MatchID: current.MatchID, SkillDirection: replacement.SkillFeedback, OccurredAt: now}
+	if _, err = outbox.Enqueue(ctx, tx, "matches.trust-signal", fmt.Sprintf("%s:%d", reviewID, replacement.Revision), event, now); err != nil {
+		return Review{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Review{}, err
+	}
+	return replacement, nil
+}
+
 func (r *PostgresRepository) CorrectAttendance(ctx context.Context, admin, participationID, caseID, key string, target ParticipationStatus, reason string, now time.Time) (Participation, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -279,7 +348,7 @@ func (r *PostgresRepository) r3ParticipationResult(ctx context.Context, tx pgx.T
 
 func (r *PostgresRepository) reviewByID(ctx context.Context, q rowQuerier, id string) (Review, error) {
 	var v Review
-	err := q.QueryRow(ctx, `SELECT id,match_id,reviewer_id,target_player_id,match_quality,host_rating,tags,skill_feedback,revision,submitted_at FROM matches.reviews WHERE id=$1`, id).Scan(&v.ID, &v.MatchID, &v.ReviewerID, &v.TargetPlayerID, &v.MatchQuality, &v.HostRating, &v.Tags, &v.SkillFeedback, &v.Revision, &v.SubmittedAt)
+	err := q.QueryRow(ctx, `SELECT id,match_id,reviewer_id,target_player_id,match_quality,host_rating,tags,skill_feedback,revision,submitted_at,corrected_at,coalesce(corrected_by::text,'') FROM matches.reviews WHERE id=$1`, id).Scan(&v.ID, &v.MatchID, &v.ReviewerID, &v.TargetPlayerID, &v.MatchQuality, &v.HostRating, &v.Tags, &v.SkillFeedback, &v.Revision, &v.SubmittedAt, &v.CorrectedAt, &v.CorrectedBy)
 	return v, err
 }
 
@@ -329,19 +398,26 @@ func (r *PostgresRepository) RoomAccess(ctx context.Context, accountID, matchID 
 }
 
 func (r *PostgresRepository) RecommendationCandidates(ctx context.Context, accountID string, now time.Time, limit int) ([]RecommendationCandidate, error) {
-	rows, err := r.pool.Query(ctx, `SELECT m.id,m.host_id,m.venue_area,m.venue_time_zone,m.format,m.style,m.start_at,m.end_at,m.min_level,m.max_level,m.join_mode
-FROM matches.matches m
-WHERE m.status IN('OPEN','FULL') AND m.start_at>$2
-AND (SELECT count(*) FROM matches.participations p LEFT JOIN matches.holds h ON h.participation_id=p.id
-     WHERE p.match_id=m.id AND (p.status IN('JOINED','CHECKED_IN') OR (p.status='AWAITING_PAYMENT' AND h.status='HELD' AND h.expires_at>$2)))<m.capacity
-AND NOT EXISTS(SELECT 1 FROM matches.participations p WHERE p.player_id=$1
-     AND p.status IN('AWAITING_PAYMENT','JOINED','CHECKED_IN') AND p.start_at<m.end_at AND p.end_at>m.start_at)
+	rows, err := r.pool.Query(ctx, `WITH occupancy AS MATERIALIZED (
+  SELECT p.match_id,count(*) occupied
+  FROM matches.participations p
+  LEFT JOIN matches.holds h ON h.participation_id=p.id
+	WHERE p.status IN('JOINED','CHECKED_IN') OR (p.status='AWAITING_PAYMENT' AND h.status='HELD' AND h.expires_at>$2)
+  GROUP BY p.match_id
+), player_schedule AS MATERIALIZED (
+  SELECT start_at,end_at FROM matches.participations
+  WHERE player_id=$1 AND status IN('AWAITING_PAYMENT','JOINED','CHECKED_IN')
+)
+SELECT m.id,m.host_id,m.venue_area,m.venue_time_zone,m.format,m.style,m.start_at,m.end_at,m.min_level,m.max_level,m.join_mode
+FROM matches.matches m LEFT JOIN occupancy o ON o.match_id=m.id
+WHERE m.status IN('OPEN','FULL') AND m.start_at>$2 AND COALESCE(o.occupied,0)<m.capacity
+AND NOT EXISTS(SELECT 1 FROM player_schedule s WHERE s.start_at<m.end_at AND s.end_at>m.start_at)
 ORDER BY m.start_at,m.id LIMIT $3`, accountID, now, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var result []RecommendationCandidate
+	result := make([]RecommendationCandidate, 0, limit)
 	for rows.Next() {
 		var item RecommendationCandidate
 		if err = rows.Scan(&item.ID, &item.HostID, &item.Area, &item.TimeZone, &item.Format, &item.Style, &item.StartAt, &item.EndAt, &item.MinLevel, &item.MaxLevel, &item.JoinMode); err != nil {

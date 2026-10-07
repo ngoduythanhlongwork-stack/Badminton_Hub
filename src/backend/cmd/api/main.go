@@ -14,6 +14,7 @@ import (
 	"badmintonhub/internal/config"
 	"badmintonhub/internal/httpapi"
 	"badmintonhub/internal/platform/connections"
+	"badmintonhub/internal/platform/metrics"
 	"badmintonhub/internal/platform/outbox"
 )
 
@@ -49,12 +50,14 @@ func run(logger *slog.Logger) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("compose R1 modules: %w", err)
 	}
+	httpMetrics := &metrics.HTTP{}
 	server := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewHandlerWithOptions(httpapi.Options{
 			Readiness: httpapi.Readiness{Postgres: clients.Postgres.Ping, Redis: clients.PingRedis, Timeout: cfg.DependencyTimeout},
 			Logger:    logger,
 			Register:  r1.routes.Register,
+			Metrics:   httpMetrics,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,

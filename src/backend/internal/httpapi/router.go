@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"badmintonhub/internal/platform/metrics"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ type Options struct {
 	Logger      *slog.Logger
 	MaxBodySize int64
 	Register    func(*http.ServeMux)
+	Metrics     *metrics.HTTP
 }
 
 // NewHandler is the composition point for module HTTP routes.
@@ -30,19 +32,22 @@ func NewHandlerWithOptions(options Options) http.Handler {
 		writeJSON(w, map[string]string{
 			"service":      "Badminton Hub API",
 			"architecture": "modular-monolith",
-			"status":       "r2-paid-pilot-core",
+			"status":       "r3-closed-loop-mvp",
 		})
 	}))
 	mux.HandleFunc("/health", method(http.MethodGet, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	}))
+	if options.Metrics != nil {
+		mux.Handle("GET /metrics", options.Metrics)
+	}
 	if options.Register != nil {
 		options.Register(mux)
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, http.StatusNotFound, "route_not_found", "Route not found.")
 	})
-	return middleware(options.Logger, options.MaxBodySize, mux)
+	return middleware(options.Logger, options.MaxBodySize, options.Metrics, mux)
 }
 
 func method(allowed string, handler http.HandlerFunc) http.HandlerFunc {
